@@ -82,6 +82,7 @@ def init_db():
     for ddl in [
         "ALTER TABLE futures ADD COLUMN creator_id INTEGER",
         "ALTER TABLE contributions ADD COLUMN author_id INTEGER",
+        "ALTER TABLE futures ADD COLUMN category TEXT DEFAULT 'Unknown'",
     ]:
         try: conn.execute(ddl)
         except sqlite3.OperationalError: pass
@@ -164,12 +165,12 @@ def ensure_default_user():
 def gen_short_id():
     return "".join(random.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(5))
 
-def create_future(title, body, creator, creator_id):
+def create_future(title, body, creator, creator_id, category="Unknown"):
     short, fid = gen_short_id(), str(uuid.uuid4())
     conn = get_db()
     conn.execute(
-        "INSERT INTO futures (id,short_id,title,body,creator,creator_id,created_at) VALUES (?,?,?,?,?,?,?)",
-        (fid, short, title, body, creator, creator_id, now_iso()))
+        "INSERT INTO futures (id,short_id,title,body,category,creator,creator_id,created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (fid, short, title, body, category, creator, creator_id, now_iso()))
     conn.commit(); conn.close()
     return short
 
@@ -234,6 +235,51 @@ def get_comments(future_id):
         "SELECT c.*, u.username FROM comments c LEFT JOIN users u ON u.id=c.author_id "
         "WHERE c.future_id=? ORDER BY c.created_at ASC", (future_id,)).fetchall()
     conn.close(); return rows
+
+# ---- Delete helpers ----
+def delete_future(short):
+    """Owner-only seed deletion: removes the seed + all contributions/comments."""
+    conn = get_db()
+    f = conn.execute("SELECT id FROM futures WHERE short_id=?", (short,)).fetchone()
+    if not f: conn.close(); return False
+    fid = f["id"]
+    conn.execute("DELETE FROM comments     WHERE future_id=?", (fid,))
+    conn.execute("DELETE FROM contributions WHERE future_id=?", (fid,))
+    conn.execute("DELETE FROM futures       WHERE id=?",       (fid,))
+    conn.commit(); conn.close(); return True
+
+def get_contribution_author(cid):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT c.author_id, c.future_id, f.short_id "
+        "FROM contributions c JOIN futures f ON f.id=c.future_id "
+        "WHERE c.id=?", (cid,)).fetchone()
+    conn.close(); return row
+
+def delete_contribution(cid):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT future_id FROM contributions WHERE id=?", (cid,)).fetchone()
+    if not row: conn.close(); return None
+    fid = row["future_id"]
+    conn.execute("DELETE FROM contributions WHERE id=?", (cid,))
+    conn.execute("UPDATE futures SET branches = MAX(0, branches-1) WHERE id=?", (fid,))
+    short_row = conn.execute("SELECT short_id FROM futures WHERE id=?", (fid,)).fetchone()
+    conn.commit(); conn.close()
+    return short_row["short_id"] if short_row else None
+
+def get_comment_author(cid):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT author_id FROM comments WHERE id=?", (cid,)).fetchone()
+    conn.close(); return row
+
+def delete_comment(cid):
+    conn = get_db()
+    # delete the comment + its replies
+    conn.execute(
+        "DELETE FROM comments WHERE id=? OR parent_id=?", (cid, cid))
+    conn.commit(); conn.close()
 
 def add_notification(user_id, actor_id, ntype, short, text):
     if user_id == actor_id: return
@@ -730,6 +776,37 @@ footer {
 /* Fade in animation */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .fade-in { animation: fadeIn 0.4s ease; }
+
+/* Toast — top-right transient notifications */
+#toast-root { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { background: var(--card-bg); border: 1px solid var(--border); color: var(--fg); padding: 12px 16px; border-radius: 12px; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); opacity: 0; transform: translateY(-8px); transition: opacity .25s ease, transform .25s ease; pointer-events: auto; max-width: 320px; }
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.ok  { border-color: rgba(120, 200, 130, 0.35); }
+.toast.err { border-color: rgba(220, 120, 120, 0.4); }
+
+/* Row-level inline actions (delete, reply) — visible on hover for clarity */
+.row-actions { display: inline-flex; gap: 6px; margin-left: 8px; opacity: 0; transition: opacity .15s ease; }
+.has-actions:hover .row-actions, .row-actions:focus-within { opacity: 1; }
+.icon-btn { background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; font-size: 12px; border-radius: 6px; font-family: inherit; }
+.icon-btn:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
+.icon-btn.danger:hover { color: #ff8a8a; }
+
+.reply-form { margin-top: 8px; margin-left: 20px; padding: 12px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; display: none; }
+.reply-form.open { display: block; }
+.reply-form textarea { width: 100%; background: transparent; border: 0; color: var(--fg); font-family: inherit; font-size: 13px; resize: vertical; min-height: 60px; outline: none; }
+.reply-form .reply-actions { display: flex; gap: 6px; margin-top: 8px; }
+.reply-form .reply-actions button { padding: 6px 12px; font-size: 12px; border-radius: 8px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--fg); font-family: inherit; }
+.reply-form .reply-actions .primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+.confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 999; }
+.confirm-overlay.open { display: flex; }
+.confirm-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 24px; max-width: 400px; width: 90%; box-shadow: 0 12px 32px rgba(0,0,0,0.4); }
+.confirm-box h3 { margin: 0 0 8px 0; font-size: 16px; font-weight: 500; }
+.confirm-box p { margin: 0 0 20px 0; font-size: 14px; color: var(--muted); }
+.confirm-box .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.confirm-box button { padding: 8px 16px; border-radius: 10px; border: 1px solid var(--border); background: transparent; color: var(--fg); font-family: inherit; font-size: 14px; cursor: pointer; }
+.confirm-box button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.confirm-box button.danger { background: #ff5757; color: #fff; border-color: #ff5757; }
 """
 
 # -------------------------------------------------
@@ -749,13 +826,199 @@ def avatar_initial(username):
 # -------------------------------------------------
 # Page shell
 # -------------------------------------------------
-def page(user, unread, title, body, wide=False):
+def _shared_js():
+    """Client-side interactions shared by every page:
+    - toasts for ephemeral feedback
+    - confirm() dialog replacement
+    - delete buttons (delegated)
+    - reply forms (delegated)
+    - notifications bell -> mark read on click
+    - publish button enable + Ctrl/Cmd+Enter shortcut
+    - explore category filter
+    - copy-link with feedback
+    Keeping it inline keeps the app single-file / zero-build."""
+    return """
+<script>
+(function(){
+  const toastRoot = document.getElementById('toast-root');
+  window.toast = function(msg, kind) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (kind || '');
+    t.textContent = msg;
+    toastRoot.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 250);
+    }, 2200);
+  };
+
+  // Confirm dialog (replacement for window.confirm — looks better + non-blocking)
+  window.confirmModal = function(title, msg, opts) {
+    opts = opts || {};
+    return new Promise(resolve => {
+      const root = document.getElementById('confirm-root');
+      const box  = document.getElementById('confirm-box');
+      box.innerHTML = '<h3></h3><p></p><div class="actions"><button data-act="cancel">Cancel</button><button data-act="ok" class="' + (opts.danger ? 'danger' : 'primary') + '">' + (opts.okLabel || 'Confirm') + '</button></div>';
+      box.querySelector('h3').textContent = title;
+      box.querySelector('p').textContent = msg;
+      root.classList.add('open');
+      function close(v) {
+        root.classList.remove('open');
+        box.innerHTML = '';
+        resolve(v);
+      }
+      box.querySelector('[data-act=cancel]').onclick = () => close(false);
+      box.querySelector('[data-act=ok]').onclick    = () => close(true);
+    });
+  };
+
+  // ---------- Notifications bell: mark as read when clicked ----------
+  const bell = document.querySelector('a[href="/notifications"]');
+  if (bell) bell.addEventListener('click', () => {
+    const badge = bell.querySelector('span');
+    if (badge) badge.remove();
+    fetch('/api/notifications/read', { method: 'GET' }).catch(() => {});
+  });
+
+  // ---------- Publish form: enable button + keyboard shortcut ----------
+  const fi = document.getElementById('futureInput');
+  const pb = document.getElementById('publishBtn');
+  if (fi && pb) {
+    fi.addEventListener('input', () => { pb.disabled = !fi.value.trim(); });
+    fi.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (fi.value.trim()) fi.form.submit();
+      }
+    });
+  }
+
+  // ---------- Explore category filter ----------
+  document.querySelectorAll('[data-explore-cat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.exploreCat;
+      document.querySelectorAll('[data-explore-cat]').forEach(b => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('[data-row-cat]').forEach(row => {
+        const cats = (row.dataset.rowCat || '').split(',');
+        row.style.display = (cat === 'All' || cats.includes(cat)) ? '' : 'none';
+      });
+      const empty = document.getElementById('explore-empty');
+      const visible = Array.from(document.querySelectorAll('[data-row-cat]')).filter(r => r.style.display !== 'none');
+      if (empty) empty.style.display = visible.length ? 'none' : '';
+    });
+  });
+
+  // ---------- Profile tabs ----------
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(x => x.style.display = 'none');
+      t.classList.add('active');
+      const pane = document.getElementById(t.dataset.tab);
+      if (pane) pane.style.display = 'block';
+    });
+  });
+
+  // ---------- Header scroll shadow ----------
+  const hdr = document.getElementById('site-header');
+  if (hdr) window.addEventListener('scroll', () => hdr.classList.toggle('scrolled', window.scrollY > 10));
+
+  // ---------- Delegated handlers ----------
+  document.body.addEventListener('click', async e => {
+    // Copy link buttons
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      const raw = copy.dataset.copy;
+      const url = raw.startsWith('http') ? raw : location.origin + raw;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('Link copied', 'ok');
+      } catch(_) {
+        toast('Copy failed', 'err');
+      }
+      return;
+    }
+
+    // Delete buttons (redirect for whole-page delete, AJAX for inline)
+    const del = e.target.closest('[data-delete]');
+    if (del) {
+      e.preventDefault();
+      const url = del.dataset.delete;
+      const what = del.dataset.label || 'this';
+      const ok = await confirmModal('Delete ' + what + '?', 'This cannot be undone.', { danger: true, okLabel: 'Delete' });
+      if (!ok) return;
+      try {
+        const r = await fetch(url, { method: 'POST' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.ok === false) throw new Error(j.error || 'Failed');
+        // If the API returned a redirect target, navigate; otherwise remove from DOM.
+        if (j.redirect) {
+          location.href = j.redirect;
+          return;
+        }
+        const row = del.closest('[data-row],.contrib-item,.comment,.item');
+        if (row) { row.style.transition = 'opacity .2s ease'; row.style.opacity = '0'; setTimeout(() => row.remove(), 220); }
+        toast('Deleted', 'ok');
+      } catch (err) {
+        toast(err.message || 'Delete failed', 'err');
+      }
+      return;
+    }
+
+    // Reply toggles
+    const rep = e.target.closest('[data-reply-toggle]');
+    if (rep) {
+      const form = rep.closest('.comment').querySelector('.reply-form');
+      if (form) {
+        form.classList.toggle('open');
+        const ta = form.querySelector('textarea');
+        if (form.classList.contains('open') && ta) ta.focus();
+      }
+      return;
+    }
+
+    // Reply submit (cancel + post)
+    if (e.target.matches('[data-reply-cancel]')) {
+      const f = e.target.closest('.reply-form');
+      if (f) f.classList.remove('open');
+      return;
+    }
+    if (e.target.matches('[data-reply-post]')) {
+      const f = e.target.closest('.reply-form');
+      const ta = f.querySelector('textarea');
+      const body = ta.value.trim();
+      if (!body) { toast('Empty reply', 'err'); return; }
+      const futureId = f.dataset.futureId;
+      const parentId = f.dataset.parentId;
+      try {
+        const r = await fetch('/api/comment', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+          body: 'future_id=' + encodeURIComponent(futureId)
+              + '&parent_id=' + encodeURIComponent(parentId)
+              + '&body=' + encodeURIComponent(body)
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.ok === false) throw new Error(j.error || 'Failed');
+        toast('Reply posted', 'ok');
+        setTimeout(() => location.reload(), 400);
+      } catch (err) {
+        toast(err.message || 'Reply failed', 'err');
+      }
+      return;
+    }
+  });
+})();
+</script>"""
+
+def page(user, unread, title, body, wide=False, extra_js=""):
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · Duoweilai</title>
 <style>{CSS}</style></head>
-<body>{_header(user, unread)}{body}</body></html>"""
+<body>{_header(user, unread)}{body}<div id="toast-root"></div><div id="confirm-root" class="confirm-overlay"><div class="confirm-box" id="confirm-box"></div></div><script>{_shared_js()}{extra_js}</script></body></html>"""
 
 def _header(user, unread=0):
     """Top navigation. Auth is auto-enabled, so we just show the username
@@ -772,12 +1035,7 @@ def _header(user, unread=0):
     <a href="/explore">Explore</a>
     {right}
   </div>
-</header>
-<script>
-  window.addEventListener('scroll', () => {{
-    document.getElementById('site-header').classList.toggle('scrolled', window.scrollY > 10);
-  }});
-</script>"""
+</header>"""
 
 # -------------------------------------------------
 # Pages
@@ -808,6 +1066,8 @@ def render_home(user):
         feed_html = '<div class="empty">No futures yet — be the first to plant one.</div>'
 
     # Publish form — auth is auto-enabled, so the publish box is always shown.
+    cats = ["Unknown", "Life", "Cities", "Education", "Culture", "Relationships", "Work", "Civilization", "Technology"]
+    cat_opts = "".join(f'<option value="{c}">{c}</option>' for c in cats)
     publish = f"""
     <div class="hero fade-in">
       <h1>What future do you imagine?</h1>
@@ -818,7 +1078,10 @@ def render_home(user):
         <textarea name="title" id="futureInput" placeholder="Describe a future..."
                   rows="4"></textarea>
         <div class="form-footer">
-          <span class="hint">Press ⌘+Enter to publish</span>
+          <select name="category" style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--fg);padding:6px 10px;font-size:13px;font-family:inherit;cursor:pointer">
+            {cat_opts}
+          </select>
+          <span class="hint">⌘ Enter to publish</span>
           <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
         </div>
       </div>
@@ -848,18 +1111,19 @@ def render_explore(user):
     rows = list_futures(100)
     cats = ["All", "Life", "Cities", "Education", "Culture", "Relationships", "Work", "Civilization", "Technology", "Unknown"]
     cat_btns = "".join(
-        f'<button class="cat-btn{" active" if c=="All" else ""}" data-cat="{c}">{c}</button>'
+        f'<button class="cat-btn{" active" if c=="All" else ""}" data-explore-cat="{c}">{c}</button>'
         for c in cats)
 
     if rows:
         rows_html = ""
         for f in rows:
             world_tag = ' <span class="world-indicator">World</span>' if f["is_world"] else ""
-            rows_html += (f'<a href="/f/{f["short_id"]}" class="seed-row" data-cat="All">'
+            row_cat = (f["category"] if "category" in f.keys() else None) or "Unknown"
+            rows_html += (f'<a href="/f/{f["short_id"]}" class="seed-row" data-row-cat="{row_cat}">'
                          f'<span class="title">{esc(f["title"])}</span>'
                          f'<span class="info">{f["branches"]} branches · {rel_time(f["created_at"])}{world_tag}</span></a>')
     else:
-        rows_html = '<div class="empty">No futures published yet.</div>'
+        rows_html = '<div class="empty" id="explore-empty">No futures published yet.</div>'
 
     return page(user, 0, "Explore",
                f"""
@@ -881,8 +1145,7 @@ def render_seed(user, short):
 
     # Contributions grouped by type
     groups = {}
-    for c in contribs:
-        groups.setdefault(c["type"], []).append(c)
+    for c in contribs: groups.setdefault(c["type"], []).append(c)
     contrib_html = ""
     order = ["people", "place", "story", "rule", "object", "branch"]
     for t in order:
@@ -890,26 +1153,47 @@ def render_seed(user, short):
         label = TYPE_EN.get(t, t)
         contrib_html += f'<div style="margin-top:32px"><div class="section-label">{label}s</div>'
         for c in groups[t]:
+            can_del = bool(user and user["id"] == c["author_id"])
+            del_btn = (f'<span class="row-actions" style="display:inline-flex;gap:4px;margin-left:8px">'
+                       f'<button class="icon-btn danger" data-delete="/api/contribution/{c["id"]}/delete" data-label="this contribution">✕</button>'
+                       f'</span>') if can_del else ''
             contrib_html += (f'<div class="contrib-item">'
                             f'<div class="contrib-type">{label}</div>'
                             f'<div class="contrib-title">{esc(c["title"])}</div>'
-                            f'<div class="contrib-meta">by {esc(c["creator"])} · {rel_time(c["created_at"])}</div>'
+                            f'<div class="contrib-meta">by {esc(c["creator"])} · {rel_time(c["created_at"])}{del_btn}</div>'
                             + (f'<div class="contrib-body">{esc(c["body"])}</div>' if c["body"] else '')
                             + '</div>')
         contrib_html += '</div>'
     if not contribs:
         contrib_html = '<div class="empty" style="margin-top:16px">No contributions yet. Be the first.</div>'
 
-    # Comments
-    comment_html = ""
+    # Comments — threaded (parent + replies)
+    top_level = [cm for cm in comments if not cm["parent_id"]]
+    replies_map = {}
     for cm in comments:
-        reply_to = ""
-        if cm["parent_id"]:
-            reply_to = f'<div style="font-size:12px;color:var(--subtle);margin-bottom:4px">↳ reply</div>'
-        comment_html += (f'<div class="comment">'
-                        f'<div style="font-size:13px;font-weight:500">{esc(cm["username"])}</div>'
-                        f'<div style="font-size:12px;color:var(--subtle);margin-bottom:6px">{rel_time(cm["created_at"])}{reply_to}</div>'
-                        f'<div style="font-size:14px;margin-top:4px">{esc(cm["body"])}</div></div>')
+        if cm["parent_id"]: replies_map.setdefault(cm["parent_id"], []).append(cm)
+
+    def render_comment(cm, depth=0):
+        can_del = bool(user and user["id"] == cm["author_id"])
+        del_btn = (f'<button class="icon-btn danger" data-delete="/api/comment/{cm["id"]}/delete" data-label="this comment" style="margin-left:4px">✕</button>'
+                   if can_del else '')
+        reply_btn = (f'<button class="icon-btn" data-reply-toggle style="margin-left:4px">↩ reply</button>'
+                     if depth == 0 else '')
+        html = (f'<div class="comment" data-row>'
+                f'<div style="font-size:13px;font-weight:500">{esc(cm["username"])}{del_btn}{reply_btn}</div>'
+                f'<div style="font-size:12px;color:var(--subtle);margin-bottom:6px">{rel_time(cm["created_at"])}</div>'
+                f'<div style="font-size:14px;margin-top:4px">{esc(cm["body"])}</div>'
+                f'<div class="reply-form" data-future-id="{short}" data-parent-id="{cm["id"]}">'
+                f'<textarea placeholder="Write a reply..."></textarea>'
+                f'<div class="reply-actions">'
+                f'<button data-reply-cancel class="icon-btn">Cancel</button>'
+                f'<button data-reply-post class="icon-btn primary" style="background:var(--fg);color:var(--bg);border-radius:8px;border:1px solid var(--fg)">Post</button>'
+                f'</div></div></div>')
+        for reply in replies_map.get(cm["id"], []):
+            html += render_comment(reply, depth+1)
+        return html
+
+    comment_html = "".join(render_comment(cm) for cm in top_level)
 
     # Comment form — always available (auto-login)
     comment_form = f"""
@@ -943,6 +1227,10 @@ def render_seed(user, short):
     if f["is_world"]:
         world_cta = f'<a href="/world/{short}" class="btn-secondary" style="display:inline-block;text-decoration:none;margin-top:8px">Enter World view →</a>'
 
+    can_edit_seed = bool(user and user["id"] == f["creator_id"])
+    seed_del = (f'<a class="icon-btn danger" data-delete="/api/future/{short}/delete" data-label="this seed" '
+                f'style="margin-left:8px;color:var(--muted);text-decoration:none">delete</a>'
+                if can_edit_seed else '')
     body = f"""
 <div class="container">
   <div class="seed-meta">
@@ -950,6 +1238,7 @@ def render_seed(user, short):
     <span class="seed-id">#{f["short_id"]}</span>
     <span>·</span><span>{f["views"]} views</span>
     {'<span>·</span><span style="color:var(--fg)">World</span>' if f["is_world"] else ''}
+    {seed_del}
   </div>
   <h1 class="seed-title">{esc(f["title"])}</h1>
   {('<div class="seed-body">'+esc(f["body"])+'</div>' if f["body"] else '')}
@@ -963,7 +1252,7 @@ def render_seed(user, short):
       </div>
     </a>
     <div>
-      <button class="btn-secondary" onclick="navigator.clipboard.writeText(location.origin+'/f/{short}')">Share</button>
+      <button class="btn-secondary" data-copy="/f/{short}">Share</button>
       {world_cta}
     </div>
   </div>
@@ -1101,16 +1390,6 @@ def render_person(user, username):
     <div class="item-list">{contrib_list}</div>
   </div>
 </div>
-<script>
-  document.querySelectorAll('.tab').forEach(t => {{
-    t.addEventListener('click', () => {{
-      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(x => x.style.display='none');
-      t.classList.add('active');
-      document.getElementById(t.dataset.tab).style.display = 'block';
-    }});
-  }});
-</script>
 <footer>duoweilai.com/person/{quote(username)}</footer>"""
     return page(user, unread_count(user["id"]) if user else 0, username, body)
 
@@ -1261,7 +1540,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/future":
             title = f("title")
             if not title: return self.send_json({"ok": False, "error": "Title required"}, 400)
-            short = create_future(title, f("body"), user["username"], user["id"])
+            short = create_future(title, f("body"), user["username"], user["id"],
+                                  category=f("category") or "Unknown")
             self.send_redirect(f"/f/{short}"); return
 
         if path == "/api/contribute":
@@ -1290,6 +1570,40 @@ class Handler(BaseHTTPRequestHandler):
                 add_notification(target["creator_id"], user["id"], "comment", future_id,
                                  "commented on your future")
             self.send_redirect(f"/f/{future_id}"); return
+
+        # ----- Delete endpoints -----
+        # POST /api/future/<short>/delete — owner only, removes the seed and
+        # its contributions/comments.
+        m = re.fullmatch(r"/api/future/([A-Za-z0-9_-]+)/delete", path)
+        if m:
+            target = get_future_by_short(m.group(1))
+            if not target: return self.send_json({"ok": False, "error": "Not found"}, 404)
+            if target["creator_id"] != user["id"]:
+                return self.send_json({"ok": False, "error": "Only the seed creator can delete it"}, 403)
+            delete_future(m.group(1))
+            return self.send_json({"ok": True, "redirect": "/"})
+
+        # POST /api/contribution/<id>/delete — author only
+        m = re.fullmatch(r"/api/contribution/(\d+)/delete", path)
+        if m:
+            cid = int(m.group(1))
+            owner = get_contribution_author(cid)
+            if not owner: return self.send_json({"ok": False, "error": "Not found"}, 404)
+            if owner["author_id"] != user["id"]:
+                return self.send_json({"ok": False, "error": "Only the author can delete this"}, 403)
+            short = delete_contribution(cid)
+            return self.send_json({"ok": True, "redirect": f"/f/{short}" if short else "/"})
+
+        # POST /api/comment/<id>/delete — author only
+        m = re.fullmatch(r"/api/comment/(\d+)/delete", path)
+        if m:
+            cid = int(m.group(1))
+            owner = get_comment_author(cid)
+            if not owner: return self.send_json({"ok": False, "error": "Not found"}, 404)
+            if owner["author_id"] != user["id"]:
+                return self.send_json({"ok": False, "error": "Only the author can delete this"}, 403)
+            delete_comment(cid)
+            return self.send_json({"ok": True})
 
         self.send_json({"ok": False, "error": "Unknown endpoint"}, 404)
 

@@ -1,141 +1,127 @@
-# DUOWEILAI · Web
+# Duoweilai · Web
 
-> **多未来 · Web 原型** —— 把「想象 → 世界」的循环变成可交互的软件。
+> **Plant a future seed. Watch it grow into a world.**
 
-这是 [多未来（DUOWEILAI）](https://github.com/huliye24/duoweilai) 计划的第一个软件原型。
+Duoweilai (多未来 · "Multiple Futures") is a collaborative imagination platform — anyone can publish a **Future Seed**: a "what if" question about a future that could be. Others can explore it, add to it, branch it, and help it grow into something richer.
 
-愿景仓库保存的是「想象 / 世界 / 故事 / 文化」的文本档案馆；这个仓库保存的，是把其中第一个循环变成真实可用产品的最小实现：
-
-> **一个人发布一个 Future Seed（未来种子），另一个人进入它、继续它、分叉它、共建它，直到它长成一个 World。**
+**Core loop:** Publish a Future Seed → Get a permanent link → Others explore & contribute → The seed grows → Eventually becomes a **World**.
 
 ---
 
-## 核心循环
+## Quick Start
 
-```
-一个人产生想象
-        ↓
-Publish a Future Seed（发布未来种子）
-        ↓
-获得永久 URL
-        ↓
-另一个人打开它 → Explore
-        ↓
-Continue / Branch / Contribute（继续 / 分叉 / 贡献）
-        ↓
-新的 People / Place / Story / Rule / Object 出现
-        ↓
-Future 开始 Growing（生长）
-        ↓
-吸引新的参与者
-        ↺
-```
-
-**不需要钱。** 交换的对象是：想象力 → 注意力 → 创造力 → 更多想象力。
-
----
-
-## 快速开始
-
-Python 3.8+，仅使用标准库，无需安装任何依赖。
+**No dependencies.** Python 3.8+ only. No packages to install.
 
 ```bash
+# Clone and run
+git clone https://github.com/huliye24/duoweilai-web.git
+cd duoweilai-web
 python server.py
 ```
 
-访问 `http://localhost:8080`。首次运行会自动创建 `duoweilai.db`。
+Then open **http://localhost:8080** in your browser.
 
----
+> First run automatically creates `duoweilai.db`.
 
-## 页面
+### Team (same network)
 
-| 路径 | 说明 |
-|------|------|
-| `/` | 首页 — 发布 Future Seed |
-| `/f/XXXXX` | Future Seed 详情页（永久链接） |
-| `/world/XXXXX` | World — Future 累计 ≥5 条贡献后自动升级 |
-| `/explore` | 探索 — 浏览所有正在生长的未来 |
+To let teammates access from other machines on the same LAN:
 
----
-
-## 两个角色（不是固定身份）
-
-| 角色 | 定义 |
-|------|------|
-| **Initiator / 发起者** | 提出第一个 Future Seed 的人 |
-| **Participant / 参与者** | 进入一个 Future 并让它继续生长的人 |
-
-它只是人与某个 Future 的关系，不是账户类型。今天我是某个未来的发起者，明天我就是另一个未来的参与者。
-
----
-
-## 数据结构
-
-- **futures** — 每颗 Future Seed
-- **contributions** — People / Places / Stories / Rules / Objects / Branches
-- **first_contribution_at** — 记录「第一个非发起者贡献」的时间（核心指标）
-
----
-
-## Web 0.1 验证的三个事件
-
-1. 有人发布了 Future Seed。
-2. 另一个人进入了这个 Future。
-3. 另一个人留下了新的东西。← 最关键
-
----
-
-## 核心产品指标
-
-> **Seed → First Contribution Conversion**
-
-一颗 Future Seed 发布后，有多少获得了来自其他人的第一个贡献。
-
-```
-100 Future Seeds published
-  42 Seeds received exploration
-    17 Seeds received a first contribution
-      8 Seeds received multiple contributors
-        3 Seeds began forming a World
+```bash
+DUOWEILAI_BIND=0.0.0.0 python server.py
 ```
 
-这不是 DAU 竞赛。我们验证的是：**想象能不能吸引另一个人进入，并让他产生新的想象。**
+Then access via `http://<your-local-ip>:8080`.
+
+### Custom port
+
+```bash
+DUOWEILAI_PORT=3000 python server.py
+```
 
 ---
 
-## 设计原则
+## Pages
 
-第一代只做一件事：让人能够创造、打开和继续一个 Future。代码极简，仅标准库，先把循环跑通。
+| Route | Description |
+|-------|-------------|
+| `/` | Home — publish a future seed |
+| `/explore` | Browse all published futures |
+| `/f/<id>` | Future Seed detail — contribute, comment |
+| `/world/<id>` | World view — rich multi-section exploration |
+| `/person/<username>` | User profile |
+| `/notifications` | Your notifications |
+| `/login` `/register` | Account |
 
 ---
 
-## 仓库结构
+## Features
+
+- **Future Seeds** — permanent, shareable "what if" imagination units
+- **Contributions** — add People, Places, Stories, Rules, Objects, or Branches to a seed
+- **Comments** — discuss each future
+- **Worlds** — seeds with 5+ contributions auto-upgrade to World status
+- **Notifications** — know when someone engages with your futures
+- **User accounts** — cookie-based sessions, no email required
+
+---
+
+## Design
+
+Based on the v0.1 prototype design language:
+
+- **Minimal dark UI** — near-black background (#0a0a0b), light text
+- **Inter font** — clean, readable
+- **English-first** — optimized for overseas (international) market
+- **Pill buttons, dashed CTA boxes** — distinctive visual language
+
+---
+
+## Tech
+
+- **Single file** — `server.py` (~1300 lines), no external dependencies
+- **Python stdlib only** — `sqlite3`, `http.server`, `http.cookies`
+- **SQLite** — single-file database, no server required
+- **Threaded HTTP server** — handles concurrent requests
+
+---
+
+## Project Structure
 
 ```
 duoweilai-web/
+├── server.py              # The app (single file, stdlib only)
+├── tests/
+│   ├── smoke_test.py       # Quick smoke test
+│   └── e2e_test.py        # Full end-to-end API test
+├── deploy/
+│   ├── setup.sh           # Production deployment script (Linux)
+│   ├── duoweilai.service  # systemd unit
+│   └── nginx-duoweilai.conf
+├── archive/
+│   └── v0.1-prototypes/   # v0.1 static HTML designs (5 pages)
+├── .gitignore
 ├── README.md
-├── server.py            # v0.2 现行版（唯一后端，仅标准库）
-└── archive/
-    ├── v0.2-README.md   # v0.2 原始 README
-    └── v0.1-prototypes/ # v0.1 静态 HTML 原型与旧服务
-        ├── duoweilai.html ... duoweilai05.html
-        └── v0.1-server/
-            ├── server.py
-            └── README.md
+└── LICENSE
 ```
 
 ---
 
-## 版本
+## Tests
 
-- **v0.1** — 静态 HTML 原型 + 最简后端（仅发布 / 打开 / 浏览）
-- **v0.2** — 身份系统（cookie）+ World 页 + 贡献类型（People / Place / Story / Rule / Object / Branch）
+```bash
+# Make sure the server is running first
+python server.py
+
+# In another terminal
+python tests/e2e_test.py
+```
 
 ---
 
-## 相关仓库
+## Related
 
-- [huliye24/duoweilai](https://github.com/huliye24/duoweilai) — 多未来愿景与「未来档案馆」（想象 / 世界 / 故事 / 文化）
+- [huliye24/duoweilai](https://github.com/huliye24/duoweilai) — Vision repository (imagination/world/story archives)
 
 ---
 

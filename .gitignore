@@ -14,9 +14,12 @@ venv/
 # 归档快照 / 构建产物
 *.zip
 
-# 操作系统 / 编辑器
+# OS / editor
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# Local-only files (working scripts, backups, AI memory)
+.gitignored/

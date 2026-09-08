@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """
-Duoweilai — First Principles Prototype (v0.2)
-Core loop: Publish a Future Seed → Get permanent link → Explore deeper → Build identity through creation
+Duoweilai — Web (v0.4)
+Core loop: Publish a Future Seed → Permanent link → Explore → Grow together → Become a World
+Redesigned with v0.1 prototype UI language · English-first · Overseas market
 """
-
-import sqlite3
-import json
-import uuid
-import random
-import re
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import sqlite3, json, os, uuid, random, re, hashlib, secrets
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote, quote
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,9 +14,30 @@ from http.cookies import SimpleCookie
 # -------------------------------------------------
 # Config
 # -------------------------------------------------
-PORT = 8080
-DB_PATH = Path(__file__).parent / "duoweilai.db"
-BASE_URL = f"http://localhost:{PORT}"
+PORT = int(os.environ.get("DUOWEILAI_PORT", "8080"))
+BIND = os.environ.get("DUOWEILAI_BIND", "0.0.0.0")
+SECURE_COOKIE = os.environ.get("DUOWEILAI_SECURE_COOKIE", "") == "1"
+MAX_BODY = 64 * 1024
+DB_PATH = Path(os.environ.get("DUOWEILAI_DB") or (Path(__file__).parent / "duoweilai.db"))
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def rel_time(iso):
+    """English relative time labels."""
+    try:
+        t = datetime.fromisoformat(iso)
+    except Exception:
+        return iso
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - t
+    s = int(delta.total_seconds())
+    if s < 60:    return "just now"
+    if s < 3600: return f"{s//60}m ago"
+    if s < 86400: return f"{s//3600}h ago"
+    if s < 86400*30: return f"{s//86400}d ago"
+    return t.strftime("%d %b %Y")
 
 # -------------------------------------------------
 # Database
@@ -34,996 +51,1309 @@ def init_db():
     conn = get_db()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS futures (
-            id          TEXT PRIMARY KEY,
-            short_id    TEXT UNIQUE NOT NULL,
-            title       TEXT NOT NULL,
-            body        TEXT NOT NULL,
-            creator     TEXT NOT NULL DEFAULT 'Anonymous',
-            created_at  TEXT NOT NULL,
-            branches    INTEGER DEFAULT 0,
-            views       INTEGER DEFAULT 0,
-            is_world    INTEGER DEFAULT 0
-        );
-
+            id TEXT PRIMARY KEY, short_id TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL, body TEXT NOT NULL,
+            creator TEXT NOT NULL DEFAULT 'Anonymous', creator_id INTEGER,
+            created_at TEXT NOT NULL, branches INTEGER DEFAULT 0,
+            views INTEGER DEFAULT 0, is_world INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS contributions (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            future_id   TEXT NOT NULL,
-            type        TEXT NOT NULL,
-            title       TEXT NOT NULL,
-            body        TEXT,
-            creator     TEXT NOT NULL DEFAULT 'Anonymous',
-            created_at  TEXT NOT NULL,
-            FOREIGN KEY (future_id) REFERENCES futures(id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_futures_short ON futures(short_id);
-        CREATE INDEX IF NOT EXISTS idx_futures_creator ON futures(creator);
-        CREATE INDEX IF NOT EXISTS idx_contrib_future ON contributions(future_id);
-        CREATE INDEX IF NOT EXISTS idx_contrib_creator ON contributions(creator);
+            id INTEGER PRIMARY KEY AUTOINCREMENT, future_id TEXT NOT NULL,
+            type TEXT NOT NULL, title TEXT NOT NULL, body TEXT,
+            creator TEXT NOT NULL DEFAULT 'Anonymous', author_id INTEGER,
+            created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, future_id TEXT NOT NULL,
+            contribution_id INTEGER, parent_id INTEGER, author_id INTEGER NOT NULL,
+            body TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            actor_id INTEGER NOT NULL, type TEXT NOT NULL,
+            future_short_id TEXT, text TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0, created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_cf ON contributions(future_id);
+        CREATE INDEX IF NOT EXISTS idx_cm ON comments(future_id);
+        CREATE INDEX IF NOT EXISTS idx_nu ON notifications(user_id);
     """)
-    # migration for existing DBs
+    for ddl in [
+        "ALTER TABLE futures ADD COLUMN creator_id INTEGER",
+        "ALTER TABLE contributions ADD COLUMN author_id INTEGER",
+    ]:
+        try: conn.execute(ddl)
+        except sqlite3.OperationalError: pass
+    conn.commit(); conn.close()
+
+# -------------------------------------------------
+# Auth
+# -------------------------------------------------
+def hash_password(password):
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 100000)
+    return f"{salt}${dk.hex()}"
+
+def verify_password(password, stored):
     try:
-        conn.execute("ALTER TABLE futures ADD COLUMN is_world INTEGER DEFAULT 0")
-        conn.commit()
-    except Exception:
-        pass
-    conn.close()
+        salt, hx = stored.split("$")
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 100000)
+        return secrets.compare_digest(dk.hex(), hx)
+    except ValueError:
+        return False
 
-def generate_short_id():
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "".join(random.choice(alphabet) for _ in range(5))
-
-def create_future(title: str, body: str, creator: str = "Anonymous") -> dict:
+def create_user(username, password):
     conn = get_db()
-    short_id = generate_short_id()
-    while conn.execute("SELECT 1 FROM futures WHERE short_id = ?", (short_id,)).fetchone():
-        short_id = generate_short_id()
+    try:
+        cur = conn.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+            (username, hash_password(password), now_iso()))
+        conn.commit(); conn.close()
+        return cur.lastrowid
+    except sqlite3.IntegrityError:
+        conn.close(); return None
 
-    future_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+def authenticate(username, password):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    conn.close()
+    return row["id"] if row and verify_password(password, row["password_hash"]) else None
 
-    if not title:
-        title = body.strip().split("\n")[0][:100]
-        if len(body.strip()) > 100:
-            title = title.rstrip(".,;:!?") + "…"
+def create_session(user_id):
+    token = secrets.token_hex(32)
+    conn = get_db()
+    conn.execute("INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)",
+                 (token, user_id, now_iso()))
+    conn.commit(); conn.close()
+    return token
 
+def get_user_by_session(token):
+    if not token: return None
+    conn = get_db()
+    row = conn.execute(
+        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?",
+        (token,)).fetchone()
+    conn.close(); return row
+
+def delete_session(token):
+    if not token: return
+    conn = get_db()
+    conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+    conn.commit(); conn.close()
+
+def get_user_by_id(uid):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    conn.close(); return row
+
+# -------------------------------------------------
+# Business
+# -------------------------------------------------
+def gen_short_id():
+    return "".join(random.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(5))
+
+def create_future(title, body, creator, creator_id):
+    short, fid = gen_short_id(), str(uuid.uuid4())
+    conn = get_db()
     conn.execute(
-        "INSERT INTO futures (id, short_id, title, body, creator, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (future_id, short_id, title, body, creator, now)
-    )
-    conn.commit()
-    conn.close()
-    return {"id": future_id, "short_id": short_id, "title": title}
+        "INSERT INTO futures (id,short_id,title,body,creator,creator_id,created_at) VALUES (?,?,?,?,?,?,?)",
+        (fid, short, title, body, creator, creator_id, now_iso()))
+    conn.commit(); conn.close()
+    return short
 
-def get_future_by_short(short_id: str, inc_view=True):
+def get_future_by_short(short):
     conn = get_db()
-    row = conn.execute("SELECT * FROM futures WHERE short_id = ?", (short_id.upper(),)).fetchone()
-    if row and inc_view:
-        conn.execute("UPDATE futures SET views = views + 1 WHERE short_id = ?", (short_id.upper(),))
-        conn.commit()
-    conn.close()
-    return dict(row) if row else None
+    row = conn.execute("SELECT * FROM futures WHERE short_id=?", (short,)).fetchone()
+    conn.close(); return row
 
-def list_futures(limit=30):
+def inc_views(short):
+    conn = get_db()
+    conn.execute("UPDATE futures SET views=views+1 WHERE short_id=?", (short,))
+    conn.commit(); conn.close()
+
+def list_futures(limit=100):
     conn = get_db()
     rows = conn.execute(
-        "SELECT short_id, title, creator, created_at, branches, views, is_world FROM futures ORDER BY created_at DESC LIMIT ?",
-        (limit,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        "SELECT * FROM futures ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    conn.close(); return rows
 
-def get_contributions(future_id: str, type_filter=None):
+def get_contributions(future_id):
     conn = get_db()
-    if type_filter:
-        rows = conn.execute(
-            "SELECT * FROM contributions WHERE future_id = ? AND type = ? ORDER BY created_at DESC",
-            (future_id, type_filter)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM contributions WHERE future_id = ? ORDER BY created_at DESC",
-            (future_id,)
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    rows = conn.execute(
+        "SELECT * FROM contributions WHERE future_id=? ORDER BY created_at ASC",
+        (future_id,)).fetchall()
+    conn.close(); return rows
 
-def add_contribution(future_id: str, type_: str, title: str, body: str = "", creator: str = "Anonymous"):
+def get_contribution(cid):
     conn = get_db()
-    now = datetime.now(timezone.utc).isoformat()
+    row = conn.execute("SELECT * FROM contributions WHERE id=?", (cid,)).fetchone()
+    conn.close(); return row
+
+def add_contribution(future_id, ctype, title, body, creator, author_id):
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO contributions (future_id,type,title,body,creator,author_id,created_at) VALUES (?,?,?,?,?,?,?)",
+        (future_id, ctype, title, body, creator, author_id, now_iso()))
+    conn.execute("UPDATE futures SET branches=branches+1 WHERE id=?", (future_id,))
+    conn.commit(); conn.close()
+    return cur.lastrowid
+
+def maybe_make_world(short):
+    conn = get_db()
+    f = conn.execute("SELECT * FROM futures WHERE short_id=?", (short,)).fetchone()
+    if not f: conn.close(); return
+    cnt = conn.execute(
+        "SELECT COUNT(*) FROM contributions WHERE future_id=?", (f["id"],)).fetchone()[0]
+    if cnt >= 5 and not f["is_world"]:
+        conn.execute("UPDATE futures SET is_world=1 WHERE id=?", (f["id"],))
+    conn.commit(); conn.close()
+
+def add_comment(future_id, contribution_id, parent_id, author_id, body):
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO comments (future_id,contribution_id,parent_id,author_id,body,created_at) VALUES (?,?,?,?,?,?)",
+        (future_id, contribution_id, parent_id, author_id, body, now_iso()))
+    conn.commit(); conn.close()
+    return cur.lastrowid
+
+def get_comments(future_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT c.*, u.username FROM comments c LEFT JOIN users u ON u.id=c.author_id "
+        "WHERE c.future_id=? ORDER BY c.created_at ASC", (future_id,)).fetchall()
+    conn.close(); return rows
+
+def add_notification(user_id, actor_id, ntype, short, text):
+    if user_id == actor_id: return
+    conn = get_db()
     conn.execute(
-        "INSERT INTO contributions (future_id, type, title, body, creator, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (future_id, type_, title, body, creator, now)
-    )
-    if type_ == "branches":
-        conn.execute("UPDATE futures SET branches = branches + 1 WHERE id = ?", (future_id,))
-    # Auto-promote to World when it has enough substance
-    counts = conn.execute(
-        "SELECT COUNT(*) FROM contributions WHERE future_id = ?", (future_id,)
-    ).fetchone()[0]
-    if counts >= 5:
-        conn.execute("UPDATE futures SET is_world = 1 WHERE id = ?", (future_id,))
-    conn.commit()
-    conn.close()
+        "INSERT INTO notifications (user_id,actor_id,type,future_short_id,text,created_at) VALUES (?,?,?,?,?,?)",
+        (user_id, actor_id, ntype, short, text, now_iso()))
+    conn.commit(); conn.close()
 
-def get_creator_stats(name: str):
+def get_notifications(user_id):
     conn = get_db()
-    futures = conn.execute(
-        "SELECT short_id, title, created_at, branches, is_world FROM futures WHERE creator = ? ORDER BY created_at DESC",
-        (name,)
-    ).fetchall()
-    contribs = conn.execute(
-        "SELECT c.*, f.short_id, f.title as future_title FROM contributions c "
-        "JOIN futures f ON c.future_id = f.id WHERE c.creator = ? ORDER BY c.created_at DESC LIMIT 50",
-        (name,)
-    ).fetchall()
+    rows = conn.execute(
+        "SELECT n.*, u.username AS actor_name FROM notifications n "
+        "LEFT JOIN users u ON u.id=n.actor_id WHERE n.user_id=? "
+        "ORDER BY n.created_at DESC LIMIT 100", (user_id,)).fetchall()
+    conn.close(); return rows
+
+def unread_count(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0", (user_id,)).fetchone()
+    conn.close(); return row[0]
+
+def mark_notifications_read(user_id):
+    conn = get_db()
+    conn.execute("UPDATE notifications SET is_read=1 WHERE user_id=?", (user_id,))
+    conn.commit(); conn.close()
+
+def get_creator_stats(username):
+    conn = get_db()
+    started = conn.execute(
+        "SELECT COUNT(*) FROM futures WHERE creator=?", (username,)).fetchone()[0]
+    contributions = conn.execute(
+        "SELECT COUNT(*) FROM contributions WHERE creator=?", (username,)).fetchone()[0]
     worlds = conn.execute(
-        "SELECT short_id, title, branches FROM futures WHERE creator = ? AND is_world = 1",
-        (name,)
-    ).fetchall()
-    # Also count worlds they contributed to
-    helped_worlds = conn.execute(
-        "SELECT DISTINCT f.short_id, f.title, f.branches FROM futures f "
-        "JOIN contributions c ON c.future_id = f.id "
-        "WHERE c.creator = ? AND f.is_world = 1 AND f.creator != ?",
-        (name, name)
-    ).fetchall()
+        "SELECT COUNT(*) FROM futures WHERE creator=? AND is_world=1", (username,)).fetchone()[0]
     conn.close()
-    return {
-        "futures": [dict(r) for r in futures],
-        "contributions": [dict(r) for r in contribs],
-        "worlds_started": [dict(r) for r in worlds],
-        "worlds_helped": [dict(r) for r in helped_worlds],
-        "stats": {
-            "futures": len(futures),
-            "worlds": len(worlds),
-            "branches": sum(1 for c in contribs if c["type"] == "branches"),
-            "contributions": len(contribs),
-        }
-    }
+    return started, contributions, worlds
 
-def get_all_creators():
+def get_feed(limit=30):
     conn = get_db()
-    rows = conn.execute(
-        "SELECT creator, COUNT(*) as cnt FROM futures GROUP BY creator ORDER BY cnt DESC LIMIT 30"
-    ).fetchall()
+    items = []
+    for f in conn.execute("SELECT * FROM futures ORDER BY created_at DESC LIMIT 200"):
+        items.append({"kind":"future","time":f["created_at"],"actor":f["creator"],
+                      "short":f["short_id"],"text":f["title"],"type":None})
+    for c in conn.execute(
+            "SELECT c.*, f.short_id FROM contributions c JOIN futures f ON f.id=c.future_id "
+            "ORDER BY c.created_at DESC LIMIT 200"):
+        items.append({"kind":"contribution","time":c["created_at"],"actor":c["creator"],
+                      "short":c["short_id"],"text":c["title"],"type":c["type"]})
+    for cm in conn.execute(
+            "SELECT cm.*, u.username, f.short_id FROM comments cm "
+            "LEFT JOIN users u ON u.id=cm.author_id JOIN futures f ON f.id=cm.future_id "
+            "ORDER BY cm.created_at DESC LIMIT 200"):
+        items.append({"kind":"comment","time":cm["created_at"],"actor":cm["username"] or "Anonymous",
+                      "short":cm["short_id"],"text":cm["body"],"type":None})
     conn.close()
-    return [dict(r) for r in rows]
+    items.sort(key=lambda x: x["time"], reverse=True)
+    return items[:limit]
+
+# -------------------------------------------------
+# CSS — based on v0.1 prototype design language
+# Minimal dark · Inter font · Monochrome · Clean
+# -------------------------------------------------
+CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg: #0a0a0b; --fg: #f4f4f5; --muted: #a1a1aa; --subtle: #71717a;
+  --border: #27272a; --card: #111113; --hover: #18181b;
+  --input-bg: #18181b;
+}
+
+*, .clear { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg); color: var(--fg);
+  min-height: 100vh; line-height: 1.6; font-size: 15px; -webkit-font-smoothing: antialiased;
+}
+
+/* Header */
+header {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(10,10,11,0.9); backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid transparent;
+  padding: 16px 32px;
+  display: flex; justify-content: space-between; align-items: center;
+  transition: border-color 0.2s;
+}
+header.scrolled { border-bottom-color: var(--border); }
+.logo {
+  font-size: 13px; font-weight: 500; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--fg); text-decoration: none;
+}
+.header-right { display: flex; gap: 20px; align-items: center; }
+.header-right a {
+  font-size: 13px; color: var(--muted); text-decoration: none; transition: color 0.2s;
+}
+.header-right a:hover, .header-right a.active { color: var(--fg); }
+
+/* Layout containers */
+.container { max-width: 720px; margin: 0 auto; padding: 48px 24px 120px; }
+.container-wide { max-width: 960px; margin: 0 auto; padding: 48px 24px 100px; }
+
+/* Hero */
+.hero { text-align: center; margin-bottom: 40px; }
+.hero h1 {
+  font-size: clamp(26px, 5vw, 34px); font-weight: 400;
+  letter-spacing: -0.02em; margin-bottom: 10px;
+}
+.hero p { font-size: 16px; color: var(--muted); font-weight: 300; }
+
+/* Seed input */
+.input-wrapper {
+  background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: 16px; padding: 20px 20px 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input-wrapper:focus-within {
+  border-color: #3f3f46;
+  box-shadow: 0 0 0 4px rgba(255,255,255,0.03);
+}
+textarea {
+  width: 100%; background: transparent; border: none; outline: none;
+  color: var(--fg); font-size: 17px; font-family: inherit;
+  resize: none; min-height: 110px; line-height: 1.6;
+}
+textarea::placeholder { color: #52525b; }
+.form-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 12px; padding: 0 4px;
+}
+.hint { font-size: 13px; color: #52525b; }
+
+/* Buttons */
+.btn-primary {
+  background: var(--fg); color: var(--bg); border: none;
+  border-radius: 999px; padding: 10px 22px;
+  font-size: 14px; font-weight: 500; cursor: pointer;
+  font-family: inherit; transition: opacity 0.2s, transform 0.15s;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-primary:active { transform: scale(0.97); }
+.btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn-secondary {
+  background: transparent; border: 1px solid var(--border); color: var(--fg);
+  border-radius: 999px; padding: 9px 18px; font-size: 13px;
+  cursor: pointer; font-family: inherit; transition: all 0.2s;
+}
+.btn-secondary:hover { border-color: #3f3f46; background: rgba(255,255,255,0.04); }
+.btn-secondary:active { transform: scale(0.98); }
+
+/* Seed cards */
+.seeds-section { margin-top: 80px; }
+.section-label {
+  font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #52525b; margin-bottom: 16px; text-align: center;
+}
+.seeds-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px;
+}
+.seed-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 18px;
+  text-decoration: none; color: inherit;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  display: block;
+}
+.seed-card:hover {
+  border-color: #3f3f46; background: var(--hover); transform: translateY(-1px);
+}
+.seed-card .title { font-size: 14.5px; font-weight: 400; line-height: 1.45; margin-bottom: 8px; }
+.seed-card .meta { font-size: 12px; color: var(--subtle); }
+
+/* Seed detail page */
+.seed-meta { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--subtle); margin-bottom: 20px; }
+.seed-id { font-variant-numeric: tabular-nums; }
+.seed-title {
+  font-size: clamp(24px, 5vw, 32px); font-weight: 400;
+  letter-spacing: -0.025em; line-height: 1.3; margin-bottom: 24px;
+}
+.seed-body { font-size: 16.5px; color: #e4e4e7; line-height: 1.75; margin-bottom: 28px; white-space: pre-wrap; }
+.seed-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-bottom: 32px; border-bottom: 1px solid var(--border); margin-bottom: 40px;
+  flex-wrap: wrap; gap: 16px;
+}
+.creator { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
+.avatar {
+  width: 34px; height: 34px; border-radius: 50%; background: #27272a;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 500; color: var(--muted);
+}
+.creator-name { font-size: 14px; font-weight: 500; }
+.creator-date { font-size: 12px; color: var(--subtle); }
+
+/* Explore grid */
+.categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; }
+.cat-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 999px; padding: 7px 16px; font-size: 13px;
+  cursor: pointer; font-family: inherit; transition: all 0.2s;
+}
+.cat-btn:hover, .cat-btn.active {
+  border-color: #3f3f46; color: var(--fg);
+  background: rgba(255,255,255,0.03);
+}
+
+/* Explore cards — question cards */
+.question-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 22px 20px;
+  text-decoration: none; color: inherit;
+  transition: all 0.2s; display: flex; flex-direction: column; gap: 10px;
+  min-height: 140px;
+}
+.question-card:hover {
+  border-color: #3f3f46; background: var(--hover); transform: translateY(-1px);
+}
+.question-card .q { font-size: 15.5px; font-weight: 400; line-height: 1.45; flex: 1; }
+.question-card .meta { font-size: 12px; color: var(--subtle); display: flex; justify-content: space-between; }
+
+/* Seed rows (list view) */
+.seed-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 15px 18px; border: 1px solid var(--border);
+  border-radius: 12px; text-decoration: none; color: inherit;
+  transition: all 0.2s; gap: 16px;
+}
+.seed-row:hover { border-color: #3f3f46; background: rgba(255,255,255,0.02); }
+.seed-row .title { font-size: 15px; flex: 1; }
+.seed-row .info { font-size: 12px; color: var(--subtle); white-space: nowrap; }
+
+/* World page */
+.layout { display: flex; max-width: 1100px; margin: 0 auto; min-height: calc(100vh - 53px); }
+.sidebar {
+  width: 220px; flex-shrink: 0; padding: 32px 20px 40px;
+  border-right: 1px solid var(--border);
+  position: sticky; top: 53px; height: calc(100vh - 53px); overflow-y: auto;
+}
+.sidebar-label {
+  font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--subtle); margin-bottom: 12px; padding-left: 10px;
+}
+.nav-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.nav-list a {
+  display: block; padding: 8px 10px; font-size: 13.5px; color: var(--muted);
+  text-decoration: none; border-radius: 8px; transition: all 0.15s;
+}
+.nav-list a:hover { color: var(--fg); background: rgba(255,255,255,0.04); }
+.nav-list a.active { color: var(--fg); background: rgba(255,255,255,0.06); }
+.main-content { flex: 1; padding: 40px 40px 80px; max-width: 680px; }
+.world-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--subtle); margin-bottom: 16px;
+}
+.world-badge span {
+  background: rgba(255,255,255,0.06); padding: 3px 8px;
+  border-radius: 999px; font-size: 11px;
+}
+.world-title {
+  font-size: clamp(26px, 4vw, 34px); font-weight: 400;
+  letter-spacing: -0.03em; line-height: 1.25; margin-bottom: 8px;
+}
+.world-tagline { font-size: 17px; color: var(--muted); margin-bottom: 24px; }
+.world-meta {
+  display: flex; flex-wrap: wrap; gap: 20px; font-size: 13px; color: var(--subtle);
+  padding-bottom: 28px; border-bottom: 1px solid var(--border); margin-bottom: 36px;
+}
+.world-meta strong { color: var(--muted); font-weight: 500; }
+
+/* Sections */
+.section { margin-bottom: 44px; }
+.section-title {
+  font-size: 15px; font-weight: 500; margin-bottom: 16px;
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.section-title a { font-size: 13px; color: var(--muted); text-decoration: none; }
+.section-title a:hover { color: var(--fg); }
+.overview-text { font-size: 16px; color: #e4e4e7; line-height: 1.75; margin-bottom: 20px; }
+
+/* Cards grid */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; text-decoration: none; color: inherit;
+  transition: all 0.2s; display: flex; flex-direction: column; gap: 6px;
+}
+.card:hover { border-color: #3f3f46; background: var(--hover); }
+.card .name { font-size: 14px; font-weight: 500; }
+.card .desc { font-size: 12.5px; color: var(--subtle); line-height: 1.4; }
+
+/* Timeline */
+.timeline { position: relative; padding-left: 20px; }
+.timeline::before {
+  content: ''; position: absolute; left: 5px; top: 6px; bottom: 6px;
+  width: 1px; background: var(--border);
+}
+.timeline-item { position: relative; padding-bottom: 24px; }
+.timeline-item::before {
+  content: ''; position: absolute; left: -17px; top: 7px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #3f3f46; border: 2px solid var(--bg);
+}
+.timeline-item .date { font-size: 12px; color: var(--subtle); margin-bottom: 4px; }
+.timeline-item .event { font-size: 14.5px; }
+
+/* Contributors */
+.contributors { display: flex; flex-wrap: wrap; gap: 8px; }
+.contributor {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px;
+  border: 1px solid var(--border); border-radius: 999px;
+  text-decoration: none; color: inherit; font-size: 13px; transition: all 0.2s;
+}
+.contributor:hover { border-color: #3f3f46; background: rgba(255,255,255,0.03); }
+.contributor .av {
+  width: 24px; height: 24px; border-radius: 50%; background: #27272a;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--muted);
+}
+
+/* Profile page */
+.profile { display: flex; align-items: flex-start; gap: 20px; margin-bottom: 40px; }
+.avatar-lg {
+  width: 72px; height: 72px; border-radius: 50%; background: #27272a;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; font-weight: 500; color: var(--muted); flex-shrink: 0;
+}
+.stats { display: flex; gap: 28px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat-num { font-size: 20px; font-weight: 500; letter-spacing: -0.02em; }
+.stat-label { font-size: 12px; color: var(--subtle); }
+
+/* Tabs */
+.tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+.tab {
+  font-size: 14px; color: var(--subtle); padding-bottom: 12px;
+  cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s;
+  background: none; border-top: none; border-left: none; border-right: none; font-family: inherit;
+}
+.tab:hover { color: var(--muted); }
+.tab.active { color: var(--fg); border-bottom-color: var(--fg); }
+
+/* Item list */
+.item-list { display: flex; flex-direction: column; gap: 8px; }
+.item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 15px 18px; border: 1px solid var(--border);
+  border-radius: 12px; text-decoration: none; color: inherit;
+  transition: all 0.2s; gap: 16px;
+}
+.item:hover { border-color: #3f3f46; background: rgba(255,255,255,0.02); }
+.item .title { font-size: 15px; flex: 1; }
+.item .meta { font-size: 12px; color: var(--subtle); white-space: nowrap; }
+
+/* Notifications */
+.notif {
+  display: flex; gap: 12px; padding: 16px 0;
+  border-bottom: 1px solid var(--border); text-decoration: none; color: inherit;
+}
+.notif:last-child { border-bottom: none; }
+.notif.unread { background: rgba(255,255,255,0.02); }
+.notif .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg); margin-top: 7px; flex: 0 0 8px; }
+.notif .dot.read { background: transparent; }
+
+/* Feed */
+.feed { display: flex; flex-direction: column; gap: 2px; }
+.feed-item {
+  display: flex; gap: 12px; padding: 14px 0;
+  border-bottom: 1px solid var(--border); align-items: flex-start;
+}
+.feed-item:last-child { border-bottom: none; }
+.feed-item .ic {
+  flex: 0 0 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; background: #27272a; border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* Auth pages */
+.auth-wrap { max-width: 420px; margin: 60px auto; padding: 0 24px; }
+.auth-title { font-size: 22px; font-weight: 400; margin-bottom: 6px; letter-spacing: -0.02em; }
+.auth-sub { font-size: 15px; color: var(--muted); margin-bottom: 32px; }
+.auth-form { display: flex; flex-direction: column; gap: 0; }
+.auth-form label { font-size: 13px; color: var(--subtle); display: block; margin-top: 16px; margin-bottom: 6px; }
+.auth-form input {
+  width: 100%; background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: 12px; color: var(--fg); padding: 12px 14px;
+  font-size: 15px; font-family: inherit; outline: none; transition: border-color 0.2s;
+}
+.auth-form input:focus { border-color: #3f3f46; }
+.auth-form input::placeholder { color: #52525b; }
+
+/* Comment */
+.comment {
+  border-left: 2px solid var(--border); padding: 10px 14px;
+  margin-top: 10px; background: var(--hover);
+  border-radius: 0 10px 10px 0;
+}
+.comment-form { margin-top: 24px; }
+.comment-form textarea {
+  min-height: 80px; background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 14px; font-size: 14px; font-family: inherit;
+  color: var(--fg); resize: vertical; width: 100%; outline: none;
+}
+.comment-form textarea:focus { border-color: #3f3f46; }
+.comment-list { margin-top: 20px; display: flex; flex-direction: column; gap: 12px; }
+
+/* Contribute form */
+.contribute-types {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 16px 0;
+}
+.type-btn {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 8px; text-align: center; cursor: pointer; transition: all 0.2s;
+  font-family: inherit; color: var(--muted); font-size: 13px;
+}
+.type-btn:hover { border-color: #3f3f46; color: var(--fg); background: var(--hover); }
+.type-btn.selected { border-color: #3f3f46; color: var(--fg); background: var(--hover); }
+
+/* CTA box */
+.cta-box {
+  margin-top: 48px; padding: 28px; border: 1px dashed #3f3f46;
+  border-radius: 16px; text-align: center;
+}
+.cta-box p { font-size: 15px; color: var(--muted); margin-bottom: 16px; }
+
+/* Alerts */
+.alert {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 14px 16px; font-size: 14px;
+}
+.alert.err { border-color: #ff7d7d; color: #ff7d7d; }
+.alert.ok { border-color: var(--muted); color: var(--muted); }
+.alert a { color: var(--fg); }
+
+/* Contributions list */
+.contrib-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.contrib-item {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px 20px;
+  transition: border-color 0.2s;
+}
+.contrib-item:hover { border-color: #3f3f46; }
+.contrib-type {
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--subtle); margin-bottom: 6px;
+}
+.contrib-title { font-size: 15px; font-weight: 400; margin-bottom: 6px; }
+.contrib-meta { font-size: 12px; color: var(--subtle); }
+.contrib-body { font-size: 14px; color: var(--muted); margin-top: 8px; line-height: 1.6; white-space: pre-wrap; }
+
+/* Footer */
+footer {
+  text-align: center; padding: 32px; font-size: 12px; color: #3f3f46;
+  border-top: 1px solid var(--border); margin-top: 48px;
+}
+
+/* Empty state */
+.empty { text-align: center; padding: 48px 20px; color: var(--subtle); font-size: 14px; }
+
+/* World badge in header */
+.world-indicator {
+  font-size: 12px; background: rgba(255,255,255,0.06);
+  padding: 3px 10px; border-radius: 999px; color: var(--muted);
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+  .layout { flex-direction: column; }
+  .sidebar {
+    width: 100%; height: auto; position: static; border-right: none;
+    border-bottom: 1px solid var(--border); padding: 20px 16px;
+  }
+  .nav-list { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .nav-list a { padding: 6px 12px; font-size: 13px; background: rgba(255,255,255,0.03); }
+  .main-content { padding: 32px 20px 60px; }
+}
+@media (max-width: 640px) {
+  header { padding: 14px 16px; }
+  .container, .container-wide { padding: 32px 16px 80px; }
+  .seed-footer { flex-direction: column; align-items: flex-start; }
+  .profile { flex-direction: column; align-items: center; text-align: center; }
+  .stats { justify-content: center; }
+  .item { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .seed-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .contribute-types { grid-template-columns: repeat(2, 1fr); }
+  .auth-wrap { margin: 40px auto; }
+}
+
+/* Fade in animation */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: fadeIn 0.4s ease; }
+"""
 
 # -------------------------------------------------
 # Helpers
 # -------------------------------------------------
 def esc(s):
-    if s is None:
-        return ""
-    return (str(s)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;"))
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
-def format_date(iso):
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.strftime("%d %b %Y")
-    except Exception:
-        return (iso or "")[:10]
+TYPE_EN = {
+    "people": "People", "place": "Place", "story": "Story",
+    "rule": "Rule", "object": "Object", "branch": "Branch"
+}
 
-def format_relative(iso):
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        diff = now - dt
-        secs = int(diff.total_seconds())
-        if secs < 60:
-            return "just now"
-        if secs < 3600:
-            return f"{secs // 60}m ago"
-        if secs < 86400:
-            return f"{secs // 3600}h ago"
-        if secs < 604800:
-            return f"{secs // 86400}d ago"
-        return format_date(iso)
-    except Exception:
-        return format_date(iso)
+def avatar_initial(username):
+    return esc(username[0].upper()) if username else "?"
 
 # -------------------------------------------------
-# Shared CSS
+# Page shell
 # -------------------------------------------------
-COMMON_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap');
-:root {
-  --bg:#0a0a0b; --fg:#f4f4f5; --muted:#a1a1aa; --subtle:#71717a;
-  --border:#27272a; --card:#111113; --hover:#18181b; --input-bg:#18181b;
-}
-* { margin:0; padding:0; box-sizing:border-box; }
-body {
-  font-family:'Inter','Noto Sans SC',system-ui,sans-serif;
-  background:var(--bg); color:var(--fg); min-height:100vh;
-  display:flex; flex-direction:column; line-height:1.5;
-}
-header {
-  padding:20px 32px; display:flex; justify-content:space-between; align-items:center;
-  border-bottom:1px solid transparent; position:sticky; top:0; z-index:50;
-  background:rgba(10,10,11,0.88); backdrop-filter:blur(12px);
-}
-.logo { font-size:14px; font-weight:500; letter-spacing:0.12em; text-transform:uppercase; color:var(--fg); text-decoration:none; }
-.nav { display:flex; gap:20px; align-items:center; }
-.nav a { font-size:13px; color:var(--muted); text-decoration:none; transition:color .2s; }
-.nav a:hover, .nav a.active { color:var(--fg); }
-.identity {
-  font-size:13px; color:var(--muted); display:flex; align-items:center; gap:8px;
-}
-.identity a { color:var(--fg); text-decoration:none; border-bottom:1px solid #3f3f46; }
-.identity button {
-  background:transparent; border:1px solid var(--border); color:var(--muted);
-  border-radius:999px; padding:5px 12px; font-size:12px; cursor:pointer; font-family:inherit;
-}
-.identity button:hover { color:var(--fg); border-color:#3f3f46; }
-footer { padding:28px 32px; text-align:center; font-size:12px; color:#3f3f46; margin-top:auto; }
-@media (max-width:640px) {
-  header { padding:14px 16px; }
-  .nav { gap:12px; }
-}
-"""
+def page(user, unread, title, body, wide=False):
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(title)} · Duoweilai</title>
+<style>{CSS}</style></head>
+<body>{_header(user, unread)}{body}</body></html>"""
 
-def header_html(current_user=None, active=""):
-    identity = ""
-    if current_user and current_user != "Anonymous":
-        identity = f'''
-        <div class="identity">
-          <a href="/person/{quote(current_user)}">{esc(current_user)}</a>
-          <button onclick="clearIdentity()">切换</button>
-        </div>'''
+def _header(user, unread=0):
+    login = ('<a href="/login">Sign in</a><a href="/register">Sign up</a>'
+             if not user else
+             (f'<a href="/notifications" class="header-link">Notifications'
+              + (f'<span style="background:#ff7d7d;color:#0a0a0b;font-size:10px;border-radius:999px;padding:1px 5px;margin-left:4px">{unread}</span>' if unread else '')
+              + '</a>'
+              + f'<a href="/person/{quote(user["username"])}">{esc(user["username"])}</a>'
+              + '<a href="/logout">Sign out</a>'))
+    return f"""
+<header id="site-header">
+  <a href="/" class="logo">Duoweilai</a>
+  <div class="header-right">
+    <a href="/explore">Explore</a>
+    {login}
+  </div>
+</header>
+<script>
+  window.addEventListener('scroll', () => {{
+    document.getElementById('site-header').classList.toggle('scrolled', window.scrollY > 10);
+  }});
+</script>"""
+
+# -------------------------------------------------
+# Pages
+# -------------------------------------------------
+def render_home(user):
+    """Home — publish a future seed + live feed."""
+    feed = get_feed()
+
+    # Feed
+    if feed:
+        feed_html = ""
+        for it in feed:
+            icon = {"future": "✦", "contribution": "＋", "comment": "◉"}.get(it["kind"], "·")
+            if it["kind"] == "future":
+                action = "published a future seed"
+            elif it["kind"] == "contribution":
+                t = TYPE_EN.get(it["type"], it["type"])
+                action = f'contributed a <em>{t}</em>'
+            else:
+                action = "left a comment"
+            text = esc(it["text"])
+            if len(text) > 90: text = text[:90] + "…"
+            feed_html += (f'<div class="feed-item"><div class="ic">{icon}</div>'
+                          f'<div><b>{esc(it["actor"])}</b> {action} · '
+                          f'<a href="/f/{it["short"]}">{text}</a>'
+                          f'<div style="font-size:12px;color:var(--subtle);margin-top:2px">{rel_time(it["time"])}</div></div></div>')
     else:
-        identity = '''
-        <div class="identity">
-          <button onclick="setIdentity()">设置名字</button>
-        </div>'''
+        feed_html = '<div class="empty">No futures yet — be the first to plant one.</div>'
 
-    return f'''
-    <header>
-      <a href="/" class="logo">Duoweilai</a>
-      <div class="nav">
-        <a href="/explore" class="{'active' if active=='explore' else ''}">Explore</a>
-        <a href="/" class="{'active' if active=='create' else ''}">Create</a>
-        {identity}
-      </div>
-    </header>
-    <script>
-      function setIdentity() {{
-        const name = prompt("你的名字（用于署名创造）");
-        if (name && name.trim()) {{
-          document.cookie = "duoweilai_name=" + encodeURIComponent(name.trim()) + "; path=/; max-age=31536000";
-          location.reload();
-        }}
-      }}
-      function clearIdentity() {{
-        document.cookie = "duoweilai_name=; path=/; max-age=0";
-        location.reload();
-      }}
-    </script>
-    '''
-
-# -------------------------------------------------
-# Page Renderers
-# -------------------------------------------------
-def render_home(futures, current_user):
-    seeds_html = ""
-    for f in futures:
-        world_badge = ' <span style="font-size:11px;color:#71717a;">· World</span>' if f.get("is_world") else ""
-        seeds_html += f'''
-        <a href="/f/{f['short_id']}" class="seed-card">
-          <div class="title">{esc(f['title'])}{world_badge}</div>
-          <div class="meta">{esc(f['creator'])} · {format_relative(f['created_at'])} · {f['branches']} branches</div>
-        </a>'''
-
-    user_value = current_user if current_user != "Anonymous" else ""
-
-    return f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Duoweilai — What future do you imagine?</title>
-  <style>{COMMON_CSS}
-    main {{ flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; padding:40px 24px 80px; max-width:720px; margin:0 auto; width:100%; }}
-    .hero {{ text-align:center; margin-bottom:40px; }}
-    .hero h1 {{ font-size:clamp(28px,5vw,36px); font-weight:400; letter-spacing:-0.02em; margin-bottom:12px; }}
-    .hero p {{ font-size:16px; color:var(--muted); font-weight:300; }}
-    .seed-form {{ width:100%; }}
-    .input-wrapper {{ background:var(--input-bg); border:1px solid var(--border); border-radius:16px; padding:20px 20px 16px; transition:border-color .2s; }}
-    .input-wrapper:focus-within {{ border-color:#3f3f46; box-shadow:0 0 0 4px rgba(255,255,255,0.03); }}
-    textarea {{ width:100%; background:transparent; border:none; outline:none; color:var(--fg); font-size:17px; font-family:inherit; resize:none; min-height:110px; line-height:1.6; }}
-    textarea::placeholder {{ color:#52525b; }}
-    .form-footer {{ display:flex; justify-content:space-between; align-items:center; margin-top:12px; gap:12px; flex-wrap:wrap; }}
-    .hint {{ font-size:13px; color:#52525b; }}
-    .name-input {{ background:var(--input-bg); border:1px solid var(--border); border-radius:8px; padding:6px 12px; color:var(--fg); font-size:13px; font-family:inherit; width:140px; }}
-    button.publish {{ background:var(--fg); color:var(--bg); border:none; border-radius:999px; padding:10px 22px; font-size:14px; font-weight:500; cursor:pointer; font-family:inherit; }}
-    button.publish:hover {{ opacity:.9; }}
-    button.publish:disabled {{ opacity:.4; cursor:not-allowed; }}
-    .seeds-section {{ margin-top:80px; width:100%; }}
-    .seeds-label {{ font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:#52525b; margin-bottom:20px; text-align:center; }}
-    .seeds-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }}
-    .seed-card {{ background:transparent; border:1px solid var(--border); border-radius:12px; padding:18px 20px; text-decoration:none; color:inherit; transition:all .2s; display:block; }}
-    .seed-card:hover {{ border-color:#3f3f46; background:rgba(255,255,255,0.02); }}
-    .seed-card .title {{ font-size:15px; margin-bottom:6px; line-height:1.4; }}
-    .seed-card .meta {{ font-size:12px; color:#71717a; }}
-    .result {{ display:none; text-align:center; animation:fadeIn .4s ease; }}
-    .result.show {{ display:block; }}
-    .result .label {{ font-size:13px; color:var(--muted); margin-bottom:12px; }}
-    .result .url {{ font-size:18px; font-weight:500; margin-bottom:24px; word-break:break-all; }}
-    .result .url a {{ color:var(--fg); text-decoration:none; border-bottom:1px solid #3f3f46; }}
-    .result .actions {{ display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }}
-    .result button {{ background:transparent; border:1px solid var(--border); color:var(--fg); border-radius:999px; padding:9px 18px; font-size:13px; cursor:pointer; font-family:inherit; }}
-    @keyframes fadeIn {{ from{{opacity:0;transform:translateY(8px)}} to{{opacity:1;transform:translateY(0)}} }}
-  </style>
-</head>
-<body>
-  {header_html(current_user, "create")}
-  <main>
-    <div class="hero" id="hero">
-      <h1>What future do you imagine?</h1>
-      <p>写下你想象的未来，它会成为一颗永久的种子。</p>
-    </div>
-    <div class="seed-form" id="form">
-      <div class="input-wrapper">
-        <textarea id="futureInput" placeholder="Describe a future..." rows="4"></textarea>
-        <div class="form-footer">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <input class="name-input" id="creatorName" placeholder="你的名字" value="{esc(user_value)}" />
-            <span class="hint">署名（可选）</span>
+    # Publish form
+    if user:
+        publish = f"""
+        <div class="hero fade-in">
+          <h1>What future do you imagine?</h1>
+          <p>Write down a future. It becomes a permanent seed.</p>
+        </div>
+        <form method="post" action="/api/future">
+          <div class="input-wrapper">
+            <textarea name="title" id="futureInput" placeholder="Describe a future..."
+                      rows="4"></textarea>
+            <div class="form-footer">
+              <span class="hint">Press ⌘+Enter to publish</span>
+              <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
+            </div>
           </div>
-          <button class="publish" id="publishBtn" disabled>Publish a Future</button>
+        </form>"""
+    else:
+        publish = f"""
+        <div class="hero fade-in">
+          <h1>What future do you imagine?</h1>
+          <p>Write down a future. It becomes a permanent seed.</p>
         </div>
+        <div class="cta-box fade-in">
+          <p>Sign in to plant your first future seed.</p>
+          <a href="/register" class="btn-primary" style="display:inline-block;text-decoration:none">Get started</a>
+        </div>"""
+
+    # Recent seeds for browsing
+    futures = list_futures(6)
+    if futures:
+        cards = ""
+        for f in futures:
+            world_tag = ' <span class="world-indicator">World</span>' if f["is_world"] else ""
+            cards += (f'<a href="/f/{f["short_id"]}" class="seed-card">'
+                     f'<div class="title">{esc(f["title"])}</div>'
+                     f'<div class="meta">{esc(f["creator"])} · {f["branches"]} branches · {rel_time(f["created_at"])}{world_tag}</div></a>')
+        seeds_html = f"""
+        <div class="seeds-section">
+          <div class="section-label">Recently Published</div>
+          <div class="seeds-grid">{cards}</div>
+        </div>"""
+    else:
+        seeds_html = ""
+
+    return page(user, unread_count(user["id"]) if user else 0, "Home",
+               f'<div class="container">{publish}{seeds_html}</div>')
+
+def render_explore(user):
+    rows = list_futures(100)
+    cats = ["All", "Life", "Cities", "Education", "Culture", "Relationships", "Work", "Civilization", "Technology", "Unknown"]
+    cat_btns = "".join(
+        f'<button class="cat-btn{" active" if c=="All" else ""}" data-cat="{c}">{c}</button>'
+        for c in cats)
+
+    if rows:
+        rows_html = ""
+        for f in rows:
+            world_tag = ' <span class="world-indicator">World</span>' if f["is_world"] else ""
+            rows_html += (f'<a href="/f/{f["short_id"]}" class="seed-row" data-cat="All">'
+                         f'<span class="title">{esc(f["title"])}</span>'
+                         f'<span class="info">{f["branches"]} branches · {rel_time(f["created_at"])}{world_tag}</span></a>')
+    else:
+        rows_html = '<div class="empty">No futures published yet.</div>'
+
+    return page(user, 0, "Explore",
+               f"""
+<div class="container-wide">
+  <h1 style="font-size:26px;font-weight:400;letter-spacing:-0.02em;margin-bottom:8px">Explore Futures</h1>
+  <p style="font-size:15px;color:var(--muted);margin-bottom:40px">Browse the futures growing right now.</p>
+  <div class="categories">{cat_btns}</div>
+  <div class="feed">{rows_html}</div>
+</div>""")
+
+def render_seed(user, short):
+    f = get_future_by_short(short)
+    if not f:
+        return page(user, 0, "Not Found",
+                    f'<div class="container"><div class="empty">This seed doesn\'t exist.</div></div>')
+    inc_views(short)
+    contribs = get_contributions(f["id"])
+    comments = get_comments(f["id"])
+
+    # Contributions grouped by type
+    groups = {}
+    for c in contribs:
+        groups.setdefault(c["type"], []).append(c)
+    contrib_html = ""
+    order = ["people", "place", "story", "rule", "object", "branch"]
+    for t in order:
+        if t not in groups: continue
+        label = TYPE_EN.get(t, t)
+        contrib_html += f'<div style="margin-top:32px"><div class="section-label">{label}s</div>'
+        for c in groups[t]:
+            contrib_html += (f'<div class="contrib-item">'
+                            f'<div class="contrib-type">{label}</div>'
+                            f'<div class="contrib-title">{esc(c["title"])}</div>'
+                            f'<div class="contrib-meta">by {esc(c["creator"])} · {rel_time(c["created_at"])}</div>'
+                            + (f'<div class="contrib-body">{esc(c["body"])}</div>' if c["body"] else '')
+                            + '</div>')
+        contrib_html += '</div>'
+    if not contribs:
+        contrib_html = '<div class="empty" style="margin-top:16px">No contributions yet. Be the first.</div>'
+
+    # Comments
+    comment_html = ""
+    for cm in comments:
+        reply_to = ""
+        if cm["parent_id"]:
+            reply_to = f'<div style="font-size:12px;color:var(--subtle);margin-bottom:4px">↳ reply</div>'
+        comment_html += (f'<div class="comment">'
+                        f'<div style="font-size:13px;font-weight:500">{esc(cm["username"])}</div>'
+                        f'<div style="font-size:12px;color:var(--subtle);margin-bottom:6px">{rel_time(cm["created_at"])}{reply_to}</div>'
+                        f'<div style="font-size:14px;margin-top:4px">{esc(cm["body"])}</div></div>')
+
+    # Comment form
+    if user:
+        comment_form = f"""
+        <div class="comment-form">
+          <form method="post" action="/api/comment">
+            <input type="hidden" name="future_id" value="{short}">
+            <textarea name="body" placeholder="Share a thought on this future..." rows="3"></textarea>
+            <div style="margin-top:10px">
+              <button type="submit" class="btn-secondary">Post comment</button>
+            </div>
+          </form>
+        </div>"""
+    else:
+        comment_form = '<div class="alert" style="margin-top:16px"><a href="/login">Sign in</a> to leave a comment.</div>'
+
+    # Contribute form
+    if user:
+        type_opts = "".join(f'<option value="{k}">{v}</option>' for k, v in TYPE_EN.items())
+        contribute_form = f"""
+        <div class="cta-box" style="margin-top:32px">
+          <p>Help this future grow. Add something to it.</p>
+          <form method="post" action="/api/contribute">
+            <input type="hidden" name="future_id" value="{short}">
+            <select name="type" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:12px">
+              {type_opts}
+            </select>
+            <input name="title" placeholder="Title" required style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px">
+            <textarea name="body" placeholder="Description (optional)" rows="3" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px"></textarea>
+            <button type="submit" class="btn-primary">Contribute</button>
+          </form>
+        </div>"""
+    else:
+        contribute_form = '<div class="alert" style="margin-top:16px"><a href="/login">Sign in</a> to contribute.</div>'
+
+    world_cta = ""
+    if f["is_world"]:
+        world_cta = f'<a href="/world/{short}" class="btn-secondary" style="display:inline-block;text-decoration:none;margin-top:8px">Enter World view →</a>'
+
+    body = f"""
+<div class="container">
+  <div class="seed-meta">
+    <span>Future Seed</span><span>·</span>
+    <span class="seed-id">#{f["short_id"]}</span>
+    <span>·</span><span>{f["views"]} views</span>
+    {'<span>·</span><span style="color:var(--fg)">World</span>' if f["is_world"] else ''}
+  </div>
+  <h1 class="seed-title">{esc(f["title"])}</h1>
+  {('<div class="seed-body">'+esc(f["body"])+'</div>' if f["body"] else '')}
+
+  <div class="seed-footer">
+    <a href="/person/{quote(f["creator"])}" class="creator">
+      <div class="avatar">{avatar_initial(f["creator"])}</div>
+      <div>
+        <div class="creator-name">{esc(f["creator"])}</div>
+        <div class="creator-date">{rel_time(f["created_at"])}</div>
       </div>
+    </a>
+    <div>
+      <button class="btn-secondary" onclick="navigator.clipboard.writeText(location.origin+'/f/{short}')">Share</button>
+      {world_cta}
     </div>
-    <div class="result" id="result">
-      <div class="label">Future Seed created</div>
-      <div class="url"><a href="#" id="seedUrl"></a></div>
-      <div class="actions">
-        <button onclick="copyUrl()">Copy link</button>
-        <button onclick="location.href=document.getElementById('seedUrl').href">Open it</button>
-        <button onclick="location.reload()">Create another</button>
-      </div>
+  </div>
+
+  {contribute_form}
+
+  <div style="margin-top:40px">
+    <div class="section-label">Growing Content · {len(contribs)}</div>
+    {contrib_html}
+  </div>
+
+  <div style="margin-top:40px">
+    <div class="section-label">Discussion · {len(comments)}</div>
+    {comment_form}
+    <div class="comment-list">{comment_html}</div>
+  </div>
+</div>"""
+    return page(user, unread_count(user["id"]) if user else 0, f["title"], body)
+
+def render_world(user, short):
+    f = get_future_by_short(short)
+    if not f:
+        return page(user, 0, "Not Found", '<div class="container"><div class="empty">World not found.</div></div>')
+    contribs = get_contributions(f["id"])
+    groups = {}
+    for c in contribs: groups.setdefault(c["type"], []).append(c)
+    nav_items = [
+        ("#overview","Overview"), ("#history","History"), ("#people","People"),
+        ("#places","Places"), ("#stories","Stories"), ("#rules","Rules"),
+        ("#objects","Objects"), ("#branches","Branches")
+    ]
+    sidebar_nav = "".join(f'<li><a href="{href}">{label}</a></li>' for href, label in nav_items)
+
+    # Sections
+    sections = ""
+    sections += f'<section class="section" id="overview"><div class="section-title">Overview</div>'
+    sections += f'<div class="overview-text">{esc(f["body"]) if f["body"] else "No overview yet."}</div></section>'
+
+    for t, label in TYPE_EN.items():
+        if t not in groups: continue
+        cards = ""
+        for c in groups[t]:
+            cards += (f'<a href="#" class="card"><div class="name">{esc(c["title"])}</div>'
+                      + (f'<div class="desc">{esc(c["body"])}</div>' if c["body"] else '')
+                      + '</a>')
+        sections += f'<section class="section" id="{label.lower()}s"><div class="section-title">{label}s</div><div class="cards">{cards}</div></section>'
+
+    body = f"""
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-label">World</div>
+    <ul class="nav-list">{sidebar_nav}</ul>
+  </aside>
+  <main class="main-content">
+    <div class="world-badge">World <span>Growing</span></div>
+    <h1 class="world-title">{esc(f["title"])}</h1>
+    <p class="world-tagline">A future taking shape</p>
+    <div class="world-meta">
+      <span>From <a href="/f/{short}" style="color:inherit;text-decoration:underline"><strong>Seed {f["short_id"]}</strong></a></span>
+      <span><strong>{f["views"]}</strong> views</span>
+      <span><strong>{len(contribs)}</strong> contributions</span>
+      <span>Since {rel_time(f["created_at"])}</span>
     </div>
-    <section class="seeds-section" id="seeds">
-      <div class="seeds-label">Growing Futures</div>
-      <div class="seeds-grid">{seeds_html or '<p style="text-align:center;color:#52525b;font-size:14px;">还没有 Future Seed。成为第一个吧。</p>'}</div>
-    </section>
+    {sections}
+    <div class="cta-box">
+      <p>Help build this world.</p>
+      <a href="/f/{short}" class="btn-primary" style="display:inline-block;text-decoration:none">Contribute</a>
+    </div>
   </main>
-  <footer>The Duoweilai Web · An open network of imagined futures</footer>
-  <script>
-    const input = document.getElementById('futureInput');
-    const btn = document.getElementById('publishBtn');
-    input.addEventListener('input', () => btn.disabled = !input.value.trim());
-    input.addEventListener('keydown', e => {{ if ((e.metaKey||e.ctrlKey) && e.key==='Enter') publish(); }});
-    btn.addEventListener('click', publish);
+</div>
+<footer>duoweilai.com/world/{short}</footer>"""
+    return page(user, 0, f["title"], body)
 
-    async function publish() {{
-      const text = input.value.trim();
-      if (!text) return;
-      const name = document.getElementById('creatorName').value.trim() || 'Anonymous';
-      if (name !== 'Anonymous') {{
-        document.cookie = "duoweilai_name=" + encodeURIComponent(name) + "; path=/; max-age=31536000";
-      }}
-      btn.disabled = true;
-      btn.textContent = 'Publishing…';
-      try {{
-        const res = await fetch('/api/future', {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ body: text, creator: name }})
-        }});
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed');
-        const url = location.origin + '/f/' + data.short_id;
-        document.getElementById('seedUrl').textContent = url;
-        document.getElementById('seedUrl').href = '/f/' + data.short_id;
-        document.getElementById('form').style.display = 'none';
-        document.getElementById('hero').style.display = 'none';
-        document.getElementById('seeds').style.display = 'none';
-        document.getElementById('result').classList.add('show');
-      }} catch (e) {{
-        alert('发布失败: ' + e.message);
-        btn.disabled = false;
-        btn.textContent = 'Publish a Future';
-      }}
-    }}
-    function copyUrl() {{
-      navigator.clipboard.writeText(document.getElementById('seedUrl').href).then(() => {{
-        event.target.textContent = 'Copied';
-        setTimeout(() => event.target.textContent = 'Copy link', 1500);
-      }});
-    }}
-  </script>
-</body>
-</html>'''
+def render_person(user, username):
+    started, contributions_count, worlds_count = get_creator_stats(username)
+    conn = get_db()
+    futures = conn.execute(
+        "SELECT * FROM futures WHERE creator=? ORDER BY created_at DESC", (username,)).fetchall()
+    conn.close()
 
-def render_seed(future, contributions, current_user):
-    groups = {"people": [], "places": [], "stories": [], "rules": [], "objects": [], "branches": []}
-    for c in contributions:
-        if c["type"] in groups:
-            groups[c["type"]].append(c)
+    # Fetch recent activity
+    recent_contribs = []
+    conn = get_db()
+    for c in conn.execute(
+            "SELECT c.*, f.short_id FROM contributions c JOIN futures f ON f.id=c.future_id "
+            "WHERE c.creator=? ORDER BY c.created_at DESC LIMIT 10", (username,)).fetchall():
+        recent_contribs.append(c)
+    conn.close()
 
-    def count(t): return len(groups.get(t, []))
+    if futures:
+        fut_list = ""
+        for fu in futures:
+            world_tag = ' <span class="world-indicator">World</span>' if fu["is_world"] else ""
+            fut_list += (f'<a href="/f/{fu["short_id"]}" class="item">'
+                         f'<span class="title">{esc(fu["title"])}</span>'
+                         f'<span class="meta">{fu["branches"]} branches · {rel_time(fu["created_at"])}{world_tag}</span></a>')
+    else:
+        fut_list = '<div class="empty">No futures started yet.</div>'
 
-    explore_cards = ""
-    for key, label, icon in [
-        ("people", "People", "◎"), ("places", "Places", "◇"),
-        ("stories", "Stories", "▣"), ("rules", "Rules", "◈"),
-        ("objects", "Objects", "○"), ("branches", "Branches", "↗")
-    ]:
-        explore_cards += f'''
-        <div class="explore-card">
-          <div class="icon">{icon}</div>
-          <div class="name">{label}</div>
-          <div class="count">{count(key)} {key}</div>
-        </div>'''
+    if recent_contribs:
+        contrib_list = ""
+        for c in recent_contribs:
+            t = TYPE_EN.get(c["type"], c["type"])
+            contrib_list += (f'<a href="/f/{c["short_id"]}" class="item">'
+                            f'<span class="title">Added <em>{t}</em>: {esc(c["title"])}</span>'
+                            f'<span class="meta">{rel_time(c["created_at"])}</span></a>')
+    else:
+        contrib_list = '<div class="empty">No contributions yet.</div>'
 
-    branches_html = ""
-    for b in groups["branches"][:8]:
-        branches_html += f'''
-        <div class="branch-item">
-          <span class="branch-title">{esc(b['title'])}</span>
-          <span class="branch-meta"><a href="/person/{quote(b['creator'])}" style="color:inherit;text-decoration:none;">{esc(b['creator'])}</a> · {format_relative(b['created_at'])}</span>
-        </div>'''
-
-    world_link = ""
-    if future.get("is_world") or sum(count(t) for t in groups) >= 3:
-        world_link = f'<a href="/world/{future["short_id"]}" class="action-btn" style="text-decoration:none;">Open as World</a>'
-
-    user_value = current_user if current_user != "Anonymous" else ""
-
-    return f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{esc(future['title'])} — Duoweilai</title>
-  <style>{COMMON_CSS}
-    .container {{ max-width:720px; margin:0 auto; padding:40px 24px 100px; }}
-    .seed-meta {{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--subtle); margin-bottom:18px; }}
-    .seed-title {{ font-size:clamp(26px,5vw,34px); font-weight:400; letter-spacing:-0.025em; line-height:1.3; margin-bottom:24px; }}
-    .seed-body {{ font-size:17px; color:#e4e4e7; line-height:1.75; margin-bottom:32px; white-space:pre-wrap; }}
-    .seed-footer {{ display:flex; justify-content:space-between; align-items:center; padding-bottom:36px; border-bottom:1px solid var(--border); margin-bottom:40px; flex-wrap:wrap; gap:16px; }}
-    .creator {{ display:flex; align-items:center; gap:10px; text-decoration:none; color:inherit; }}
-    .avatar {{ width:34px; height:34px; border-radius:50%; background:#27272a; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:500; color:var(--muted); }}
-    .creator-name {{ font-size:14px; font-weight:500; }}
-    .creator-date {{ font-size:12px; color:var(--subtle); }}
-    .actions {{ display:flex; gap:8px; flex-wrap:wrap; }}
-    .action-btn {{ background:transparent; border:1px solid var(--border); color:var(--muted); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; font-family:inherit; }}
-    .action-btn:hover {{ border-color:#3f3f46; color:var(--fg); background:rgba(255,255,255,0.03); }}
-    .explore-label {{ font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--subtle); margin-bottom:16px; }}
-    .explore-grid {{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }}
-    @media(min-width:560px){{ .explore-grid{{ grid-template-columns:repeat(3,1fr); }} }}
-    .explore-card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px; display:flex; flex-direction:column; gap:6px; min-height:100px; }}
-    .explore-card .icon {{ font-size:17px; opacity:.7; }}
-    .explore-card .name {{ font-size:15px; font-weight:500; }}
-    .explore-card .count {{ font-size:12px; color:var(--subtle); margin-top:auto; }}
-    .branches-section {{ margin-top:56px; }}
-    .section-title {{ font-size:15px; font-weight:500; margin-bottom:14px; }}
-    .branch-list {{ display:flex; flex-direction:column; gap:8px; }}
-    .branch-item {{ display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border:1px solid var(--border); border-radius:10px; gap:12px; }}
-    .branch-title {{ font-size:14px; }}
-    .branch-meta {{ font-size:12px; color:var(--subtle); white-space:nowrap; }}
-    .contribute {{ margin-top:56px; padding:28px; border:1px dashed #3f3f46; border-radius:16px; text-align:center; }}
-    .contribute p {{ font-size:15px; color:var(--muted); margin-bottom:16px; }}
-    .contribute button {{ background:var(--fg); color:var(--bg); border:none; border-radius:999px; padding:11px 24px; font-size:14px; font-weight:500; cursor:pointer; font-family:inherit; }}
-    .modal {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:100; align-items:center; justify-content:center; padding:20px; }}
-    .modal.show {{ display:flex; }}
-    .modal-box {{ background:var(--bg); border:1px solid var(--border); border-radius:16px; padding:28px; max-width:480px; width:100%; }}
-    .modal-box h3 {{ font-size:18px; font-weight:500; margin-bottom:16px; }}
-    .modal-box select, .modal-box input, .modal-box textarea {{ width:100%; background:var(--input-bg); border:1px solid var(--border); border-radius:10px; padding:12px; color:var(--fg); font-size:14px; font-family:inherit; margin-bottom:12px; }}
-    .modal-box textarea {{ min-height:80px; resize:vertical; }}
-    .modal-actions {{ display:flex; gap:10px; justify-content:flex-end; }}
-    .modal-actions button {{ border-radius:999px; padding:9px 18px; font-size:13px; cursor:pointer; font-family:inherit; }}
-    .modal-actions .cancel {{ background:transparent; border:1px solid var(--border); color:var(--muted); }}
-    .modal-actions .submit {{ background:var(--fg); color:var(--bg); border:none; }}
-  </style>
-</head>
-<body>
-  {header_html(current_user)}
-  <div class="container">
-    <div class="seed-meta">
-      <span>Future Seed</span><span>·</span>
-      <span>#{future['short_id']}</span>
-      {"<span>·</span><span style='color:#a1a1aa;'>World</span>" if future.get("is_world") else ""}
-    </div>
-    <h1 class="seed-title">{esc(future['title'])}</h1>
-    <div class="seed-body">{esc(future['body'])}</div>
-    <div class="seed-footer">
-      <a href="/person/{quote(future['creator'])}" class="creator">
-        <div class="avatar">{esc(future['creator'][0].upper() if future['creator'] else '?')}</div>
-        <div>
-          <div class="creator-name">{esc(future['creator'])}</div>
-          <div class="creator-date">{format_date(future['created_at'])} · 启动了这个未来</div>
-        </div>
-      </a>
-      <div class="actions">
-        <button class="action-btn" onclick="navigator.clipboard.writeText(location.href).then(()=>this.textContent='Copied')">Share</button>
-        {world_link}
-        <button class="action-btn" onclick="openContribute('branches')">Branch</button>
-      </div>
-    </div>
-    <div class="explore-label">Explore this Future</div>
-    <div class="explore-grid">{explore_cards}</div>
-    <div class="branches-section">
-      <div class="section-title">Recent Branches</div>
-      <div class="branch-list">{branches_html or '<p style="color:#52525b;font-size:14px;">还没有分支。成为第一个继续这个未来的人。</p>'}</div>
-    </div>
-    <div class="contribute">
-      <p>这个未来还在生长。你可以继续它。</p>
-      <button onclick="openContribute()">Continue this Future</button>
-    </div>
-  </div>
-  <footer>{BASE_URL}/f/{future['short_id']}</footer>
-
-  <div class="modal" id="modal">
-    <div class="modal-box">
-      <h3>Continue this Future</h3>
-      <select id="contribType">
-        <option value="branches">Branch — 开一个新方向</option>
-        <option value="people">People — 添加一个人物</option>
-        <option value="places">Places — 添加一个地点</option>
-        <option value="stories">Stories — 写下一段故事</option>
-        <option value="rules">Rules — 定义一条规则</option>
-        <option value="objects">Objects — 添加一个物件</option>
-      </select>
-      <input type="text" id="contribTitle" placeholder="标题 / 名称" />
-      <textarea id="contribBody" placeholder="描述（可选）"></textarea>
-      <input type="text" id="contribCreator" placeholder="你的名字" value="{esc(user_value)}" />
-      <div class="modal-actions">
-        <button class="cancel" onclick="closeModal()">Cancel</button>
-        <button class="submit" onclick="submitContribute()">Add</button>
+    body = f"""
+<div class="container">
+  <div class="profile">
+    <div class="avatar-lg">{avatar_initial(username)}</div>
+    <div>
+      <h1 style="font-size:22px;font-weight:500;letter-spacing:-0.02em;margin-bottom:8px">{esc(username)}</h1>
+      <p style="font-size:15px;color:var(--muted);margin-bottom:16px">A future explorer</p>
+      <div class="stats">
+        <div class="stat"><span class="stat-num">{started}</span><span class="stat-label">Futures</span></div>
+        <div class="stat"><span class="stat-num">{contributions_count}</span><span class="stat-label">Contributions</span></div>
+        <div class="stat"><span class="stat-num">{worlds_count}</span><span class="stat-label">Worlds</span></div>
       </div>
     </div>
   </div>
-  <script>
-    function openContribute(type) {{
-      if (type) document.getElementById('contribType').value = type;
-      document.getElementById('modal').classList.add('show');
-    }}
-    function closeModal() {{ document.getElementById('modal').classList.remove('show'); }}
-    async function submitContribute() {{
-      const type = document.getElementById('contribType').value;
-      const title = document.getElementById('contribTitle').value.trim();
-      const body = document.getElementById('contribBody').value.trim();
-      const creator = document.getElementById('contribCreator').value.trim() || 'Anonymous';
-      if (!title) {{ alert('请填写标题'); return; }}
-      if (creator !== 'Anonymous') {{
-        document.cookie = "duoweilai_name=" + encodeURIComponent(creator) + "; path=/; max-age=31536000";
-      }}
-      const res = await fetch('/api/contribute', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ future_id: '{future["id"]}', type, title, body, creator }})
-      }});
-      if (res.ok) location.reload();
-      else alert('Failed');
-    }}
-    document.getElementById('modal').addEventListener('click', e => {{ if (e.target.id==='modal') closeModal(); }});
-  </script>
-</body>
-</html>'''
 
-def render_world(future, contributions, current_user):
-    groups = {"people": [], "places": [], "stories": [], "rules": [], "objects": [], "branches": []}
-    for c in contributions:
-        if c["type"] in groups:
-            groups[c["type"]].append(c)
-
-    def cards(items, empty="还没有"):
-        if not items:
-            return f'<p style="color:#52525b;font-size:14px;">{empty}</p>'
-        html = '<div class="cards">'
-        for it in items:
-            desc = esc(it.get("body") or "")[:80]
-            html += f'''
-            <div class="card">
-              <div class="name">{esc(it["title"])}</div>
-              <div class="desc">{desc}</div>
-              <div class="by"><a href="/person/{quote(it["creator"])}">{esc(it["creator"])}</a></div>
-            </div>'''
-        html += '</div>'
-        return html
-
-    timeline = f'''
-    <div class="timeline-item">
-      <div class="date">{format_date(future["created_at"])}</div>
-      <div class="event"><a href="/person/{quote(future["creator"])}">{esc(future["creator"])}</a> 发布了原始 Future Seed</div>
-    </div>'''
-    for c in sorted(contributions, key=lambda x: x["created_at"])[:12]:
-        timeline += f'''
-        <div class="timeline-item">
-          <div class="date">{format_relative(c["created_at"])}</div>
-          <div class="event"><a href="/person/{quote(c["creator"])}">{esc(c["creator"])}</a> 添加了 {c["type"]}: {esc(c["title"])}</div>
-        </div>'''
-
-    return f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{esc(future['title'])} — World — Duoweilai</title>
-  <style>{COMMON_CSS}
-    .layout {{ display:flex; max-width:1100px; margin:0 auto; min-height:calc(100vh - 60px); }}
-    .sidebar {{ width:200px; flex-shrink:0; padding:32px 16px; border-right:1px solid var(--border); position:sticky; top:60px; height:calc(100vh - 60px); overflow-y:auto; }}
-    .sidebar-label {{ font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--subtle); margin-bottom:12px; padding-left:10px; }}
-    .nav-list {{ list-style:none; display:flex; flex-direction:column; gap:2px; }}
-    .nav-list a {{ display:block; padding:8px 10px; font-size:13.5px; color:var(--muted); text-decoration:none; border-radius:8px; }}
-    .nav-list a:hover, .nav-list a.active {{ color:var(--fg); background:rgba(255,255,255,0.05); }}
-    .main {{ flex:1; padding:36px 36px 80px; max-width:700px; }}
-    .world-badge {{ font-size:12px; color:var(--subtle); margin-bottom:12px; }}
-    .world-badge span {{ background:rgba(255,255,255,0.06); padding:3px 8px; border-radius:999px; margin-left:6px; }}
-    .world-title {{ font-size:clamp(26px,4vw,34px); font-weight:400; letter-spacing:-0.03em; margin-bottom:8px; }}
-    .world-tagline {{ font-size:16px; color:var(--muted); margin-bottom:24px; }}
-    .world-meta {{ display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--subtle); padding-bottom:28px; border-bottom:1px solid var(--border); margin-bottom:32px; }}
-    .section {{ margin-bottom:44px; }}
-    .section-title {{ font-size:15px; font-weight:500; margin-bottom:14px; display:flex; justify-content:space-between; }}
-    .section-title a {{ font-size:13px; color:var(--muted); text-decoration:none; font-weight:400; }}
-    .overview-text {{ font-size:16px; color:#e4e4e7; line-height:1.75; }}
-    .cards {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }}
-    .card {{ background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px; }}
-    .card .name {{ font-size:14px; font-weight:500; margin-bottom:4px; }}
-    .card .desc {{ font-size:12.5px; color:var(--subtle); line-height:1.4; margin-bottom:6px; }}
-    .card .by {{ font-size:11px; color:#52525b; }}
-    .card .by a {{ color:#71717a; text-decoration:none; }}
-    .timeline {{ position:relative; padding-left:20px; }}
-    .timeline::before {{ content:''; position:absolute; left:5px; top:6px; bottom:6px; width:1px; background:var(--border); }}
-    .timeline-item {{ position:relative; padding-bottom:20px; }}
-    .timeline-item::before {{ content:''; position:absolute; left:-17px; top:7px; width:7px; height:7px; border-radius:50%; background:#3f3f46; border:2px solid var(--bg); }}
-    .timeline-item .date {{ font-size:12px; color:var(--subtle); margin-bottom:3px; }}
-    .timeline-item .event {{ font-size:14px; }}
-    .timeline-item .event a {{ color:var(--muted); text-decoration:none; }}
-    .world-cta {{ margin-top:48px; padding:24px; border:1px dashed #3f3f46; border-radius:14px; text-align:center; }}
-    .world-cta p {{ font-size:14px; color:var(--muted); margin-bottom:14px; }}
-    .world-cta a {{ display:inline-block; background:var(--fg); color:var(--bg); border-radius:999px; padding:10px 20px; font-size:13px; font-weight:500; text-decoration:none; }}
-    @media (max-width:800px) {{
-      .layout {{ flex-direction:column; }}
-      .sidebar {{ width:100%; height:auto; position:static; border-right:none; border-bottom:1px solid var(--border); padding:16px; }}
-      .nav-list {{ flex-direction:row; flex-wrap:wrap; gap:6px; }}
-      .nav-list a {{ padding:6px 12px; background:rgba(255,255,255,0.03); }}
-      .main {{ padding:28px 16px 60px; }}
-    }}
-  </style>
-</head>
-<body>
-  {header_html(current_user)}
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="sidebar-label">World</div>
-      <ul class="nav-list">
-        <li><a href="#overview" class="active">Overview</a></li>
-        <li><a href="#people">People ({len(groups["people"])})</a></li>
-        <li><a href="#places">Places ({len(groups["places"])})</a></li>
-        <li><a href="#stories">Stories ({len(groups["stories"])})</a></li>
-        <li><a href="#rules">Rules ({len(groups["rules"])})</a></li>
-        <li><a href="#objects">Objects ({len(groups["objects"])})</a></li>
-        <li><a href="#branches">Branches ({len(groups["branches"])})</a></li>
-        <li><a href="#timeline">Timeline</a></li>
-      </ul>
-    </aside>
-    <main class="main">
-      <div class="world-badge">World <span>Growing</span></div>
-      <h1 class="world-title">{esc(future['title'])}</h1>
-      <p class="world-tagline">A World grown from Future Seed #{future['short_id']}</p>
-      <div class="world-meta">
-        <span>Started by <a href="/person/{quote(future['creator'])}" style="color:var(--muted);">{esc(future['creator'])}</a></span>
-        <span>{len(contributions)} contributions</span>
-        <span>{future['views']} views</span>
-        <span>Since {format_date(future['created_at'])}</span>
-      </div>
-
-      <section class="section" id="overview">
-        <div class="section-title">Overview</div>
-        <div class="overview-text">{esc(future['body'])}</div>
-      </section>
-
-      <section class="section" id="people">
-        <div class="section-title">People</div>
-        {cards(groups["people"], "还没有人物")}
-      </section>
-
-      <section class="section" id="places">
-        <div class="section-title">Places</div>
-        {cards(groups["places"], "还没有地点")}
-      </section>
-
-      <section class="section" id="stories">
-        <div class="section-title">Stories</div>
-        {cards(groups["stories"], "还没有故事")}
-      </section>
-
-      <section class="section" id="rules">
-        <div class="section-title">Rules</div>
-        {cards(groups["rules"], "还没有规则")}
-      </section>
-
-      <section class="section" id="objects">
-        <div class="section-title">Objects</div>
-        {cards(groups["objects"], "还没有物件")}
-      </section>
-
-      <section class="section" id="branches">
-        <div class="section-title">Branches</div>
-        {cards(groups["branches"], "还没有分支")}
-      </section>
-
-      <section class="section" id="timeline">
-        <div class="section-title">Timeline</div>
-        <div class="timeline">{timeline}</div>
-      </section>
-
-      <div class="world-cta">
-        <p>这个世界还在生长。你可以继续建造它。</p>
-        <a href="/f/{future['short_id']}">Back to Seed · Continue</a>
-      </div>
-    </main>
+  <div class="tabs">
+    <button class="tab active" data-tab="futures">Futures Started</button>
+    <button class="tab" data-tab="contribs">Contributions</button>
   </div>
-  <footer>duoweilai.com/world/{future['short_id']}</footer>
-</body>
-</html>'''
 
-def render_creator(name, data, current_user):
-    stats = data["stats"]
-    futures_html = ""
-    for f in data["futures"]:
-        badge = " · World" if f.get("is_world") else ""
-        futures_html += f'''
-        <a href="/f/{f['short_id']}" class="item">
-          <span class="title">{esc(f['title'])}{badge}</span>
-          <span class="meta">{f['branches']} branches · {format_relative(f['created_at'])}</span>
-        </a>'''
-
-    worlds_html = ""
-    for w in data["worlds_started"] + data["worlds_helped"]:
-        worlds_html += f'''
-        <a href="/world/{w['short_id']}" class="item">
-          <span class="title">{esc(w['title'])}</span>
-          <span class="meta">{w['branches']} branches</span>
-        </a>'''
-
-    contribs_html = ""
-    for c in data["contributions"][:20]:
-        contribs_html += f'''
-        <a href="/f/{c['short_id']}" class="item">
-          <span class="title">{c['type'].title()}: {esc(c['title'])}</span>
-          <span class="meta">{esc(c.get('future_title',''))[:30]} · {format_relative(c['created_at'])}</span>
-        </a>'''
-
-    return f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{esc(name)} — Duoweilai</title>
-  <style>{COMMON_CSS}
-    .container {{ max-width:720px; margin:0 auto; padding:40px 24px 100px; }}
-    .profile {{ display:flex; align-items:flex-start; gap:20px; margin-bottom:36px; }}
-    .avatar-lg {{ width:72px; height:72px; border-radius:50%; background:#27272a; display:flex; align-items:center; justify-content:center; font-size:28px; font-weight:500; color:var(--muted); flex-shrink:0; }}
-    .profile-info h1 {{ font-size:24px; font-weight:500; letter-spacing:-0.02em; margin-bottom:6px; }}
-    .bio {{ font-size:15px; color:var(--muted); margin-bottom:16px; }}
-    .stats {{ display:flex; gap:28px; flex-wrap:wrap; }}
-    .stat {{ display:flex; flex-direction:column; gap:2px; }}
-    .stat-num {{ font-size:20px; font-weight:500; }}
-    .stat-label {{ font-size:12px; color:var(--subtle); }}
-    .tabs {{ display:flex; gap:24px; border-bottom:1px solid var(--border); margin-bottom:24px; }}
-    .tab {{ font-size:14px; color:var(--subtle); padding-bottom:12px; cursor:pointer; border:none; background:none; border-bottom:2px solid transparent; font-family:inherit; }}
-    .tab.active {{ color:var(--fg); border-bottom-color:var(--fg); }}
-    .item-list {{ display:flex; flex-direction:column; gap:8px; }}
-    .item {{ display:flex; justify-content:space-between; align-items:center; padding:16px 18px; border:1px solid var(--border); border-radius:12px; text-decoration:none; color:inherit; transition:all .2s; gap:16px; }}
-    .item:hover {{ border-color:#3f3f46; background:rgba(255,255,255,0.02); }}
-    .item .title {{ font-size:15px; flex:1; }}
-    .item .meta {{ font-size:12px; color:var(--subtle); white-space:nowrap; }}
-    .empty {{ text-align:center; padding:40px; color:var(--subtle); font-size:14px; }}
-    @media (max-width:640px) {{
-      .profile {{ flex-direction:column; align-items:center; text-align:center; }}
-      .stats {{ justify-content:center; }}
-      .item {{ flex-direction:column; align-items:flex-start; gap:6px; }}
-    }}
-  </style>
-</head>
-<body>
-  {header_html(current_user)}
-  <div class="container">
-    <div class="profile">
-      <div class="avatar-lg">{esc(name[0].upper() if name else '?')}</div>
-      <div class="profile-info">
-        <h1>{esc(name)}</h1>
-        <p class="bio">用创造建立身份，而不是粉丝数。</p>
-        <div class="stats">
-          <div class="stat"><span class="stat-num">{stats['futures']}</span><span class="stat-label">Futures</span></div>
-          <div class="stat"><span class="stat-num">{stats['worlds']}</span><span class="stat-label">Worlds</span></div>
-          <div class="stat"><span class="stat-num">{stats['branches']}</span><span class="stat-label">Branches</span></div>
-          <div class="stat"><span class="stat-num">{stats['contributions']}</span><span class="stat-label">Contributions</span></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="tabs">
-      <button class="tab active" data-tab="started">Futures I Started</button>
-      <button class="tab" data-tab="worlds">Worlds</button>
-      <button class="tab" data-tab="contribs">Contributions</button>
-    </div>
-
-    <div id="started" class="tab-content">
-      <div class="item-list">{futures_html or '<div class="empty">还没有启动过 Future</div>'}</div>
-    </div>
-    <div id="worlds" class="tab-content" style="display:none;">
-      <div class="item-list">{worlds_html or '<div class="empty">还没有参与过 World</div>'}</div>
-    </div>
-    <div id="contribs" class="tab-content" style="display:none;">
-      <div class="item-list">{contribs_html or '<div class="empty">还没有贡献</div>'}</div>
-    </div>
+  <div id="futures" class="tab-content">
+    <div class="item-list">{fut_list}</div>
   </div>
-  <footer>duoweilai.com/person/{quote(name)}</footer>
-  <script>
-    document.querySelectorAll('.tab').forEach(tab => {{
-      tab.addEventListener('click', () => {{
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
-        document.getElementById(tab.dataset.tab).style.display = 'block';
-      }});
+
+  <div id="contribs" class="tab-content" style="display:none">
+    <div class="item-list">{contrib_list}</div>
+  </div>
+</div>
+<script>
+  document.querySelectorAll('.tab').forEach(t => {{
+    t.addEventListener('click', () => {{
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(x => x.style.display='none');
+      t.classList.add('active');
+      document.getElementById(t.dataset.tab).style.display = 'block';
     }});
-  </script>
-</body>
-</html>'''
+  }});
+</script>
+<footer>duoweilai.com/person/{quote(username)}</footer>"""
+    return page(user, unread_count(user["id"]) if user else 0, username, body)
 
-def render_explore(futures, current_user):
-    rows = ""
-    for f in futures:
-        badge = " · World" if f.get("is_world") else ""
-        rows += f'''
-        <a href="/f/{f['short_id']}" class="seed-row">
-          <span class="title">{esc(f['title'])}{badge}</span>
-          <span class="info">{esc(f['creator'])} · {f['branches']} branches</span>
-        </a>'''
-    return f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Explore Futures — Duoweilai</title>
-  <style>{COMMON_CSS}
-    .container {{ max-width:720px; margin:0 auto; padding:40px 24px 100px; }}
-    .page-title {{ font-size:28px; font-weight:400; letter-spacing:-0.02em; margin-bottom:8px; }}
-    .page-desc {{ font-size:15px; color:var(--muted); margin-bottom:36px; }}
-    .section-label {{ font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--subtle); margin-bottom:16px; }}
-    .seeds-list {{ display:flex; flex-direction:column; gap:8px; }}
-    .seed-row {{ display:flex; justify-content:space-between; align-items:center; padding:16px 18px; border:1px solid var(--border); border-radius:12px; text-decoration:none; color:inherit; transition:all .2s; gap:16px; }}
-    .seed-row:hover {{ border-color:#3f3f46; background:rgba(255,255,255,0.02); }}
-    .seed-row .title {{ font-size:15px; flex:1; }}
-    .seed-row .info {{ font-size:12px; color:var(--subtle); white-space:nowrap; }}
-  </style>
-</head>
-<body>
-  {header_html(current_user, "explore")}
-  <div class="container">
-    <h1 class="page-title">Explore Futures</h1>
-    <p class="page-desc">所有正在生长的 Future Seeds 与 Worlds。</p>
-    <div class="section-label">Recently Growing</div>
-    <div class="seeds-list">{rows or '<p style="color:#52525b;">还没有种子。</p>'}</div>
-  </div>
-  <footer>The Duoweilai Web</footer>
-</body>
-</html>'''
+def render_notifications(user):
+    if not user: return _redirect("/login")
+    notifs = get_notifications(user["id"])
+    mark_notifications_read(user["id"])
+
+    if notifs:
+        items = ""
+        for n in notifs:
+            target = f'/f/{n["future_short_id"]}' if n["future_short_id"] else "/"
+            items += (f'<a href="{target}" class="notif{" unread" if not n["is_read"] else ""}">'
+                      f'<div class="dot{" read" if n["is_read"] else ""}"></div>'
+                      f'<div style="flex:1"><b>{esc(n["actor_name"])}</b> {esc(n["text"])}'
+                      f'<div style="font-size:12px;color:var(--subtle);margin-top:2px">{rel_time(n["created_at"])}</div></div>'
+                      f'<div style="font-size:14px;color:var(--subtle)">→</div></a>')
+    else:
+        items = '<div class="empty">No notifications yet.</div>'
+
+    return page(user, 0, "Notifications",
+                f'<div class="container"><h1 style="font-size:20px;font-weight:500;margin-bottom:24px">Notifications</h1><div>{items}</div></div>')
+
+def render_login(user, error=None):
+    if user: return _redirect("/")
+    err = f'<div class="alert err" style="margin-bottom:16px">{esc(error)}</div>' if error else ""
+    body = f"""
+<div class="auth-wrap">
+  <h1 class="auth-title">Welcome back</h1>
+  <p class="auth-sub">Sign in to continue imagining futures.</p>
+  {err}
+  <form method="post" action="/api/login" class="auth-form">
+    <label>Username</label>
+    <input name="username" required autofocus placeholder="your name">
+    <label>Password</label>
+    <input name="password" type="password" required placeholder="········">
+    <div style="margin-top:20px">
+      <button type="submit" class="btn-primary" style="width:100%">Sign in</button>
+    </div>
+  </form>
+  <p style="text-align:center;margin-top:20px;font-size:14px;color:var(--muted)">
+    No account? <a href="/register" style="color:var(--fg)">Sign up</a>
+  </p>
+</div>"""
+    return page(None, 0, "Sign in", body)
+
+def render_register(user, error=None):
+    if user: return _redirect("/")
+    err = f'<div class="alert err" style="margin-bottom:16px">{esc(error)}</div>' if error else ""
+    body = f"""
+<div class="auth-wrap">
+  <h1 class="auth-title">Join Duoweilai</h1>
+  <p class="auth-sub">Create an identity and start imagining futures.</p>
+  {err}
+  <form method="post" action="/api/register" class="auth-form">
+    <label>Username</label>
+    <input name="username" required autofocus placeholder="your name (2-20 chars)">
+    <label>Password</label>
+    <input name="password" type="password" required placeholder="at least 6 characters">
+    <div style="margin-top:20px">
+      <button type="submit" class="btn-primary" style="width:100%">Create account</button>
+    </div>
+  </form>
+  <p style="text-align:center;margin-top:20px;font-size:14px;color:var(--muted)">
+    Already have one? <a href="/login" style="color:var(--fg)">Sign in</a>
+  </p>
+</div>"""
+    return page(None, 0, "Sign up", body)
+
+def _redirect(loc):
+    return (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<meta http-equiv="refresh" content="0;url={loc}"></head><body>'
+            f'<a href="{loc}">Redirecting…</a></body></html>')
 
 # -------------------------------------------------
-# HTTP Handler
+# Handler
 # -------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {args[0]}")
+    server_version = "Duoweilai/0.4"
+    protocol_version = "HTTP/1.1"
 
-    def get_current_user(self):
-        cookie = SimpleCookie(self.headers.get("Cookie", ""))
-        if "duoweilai_name" in cookie:
-            name = unquote(cookie["duoweilai_name"].value).strip()
-            if name:
-                return name[:40]
-        return "Anonymous"
+    def setup(self):
+        self._cookies = []
+        super().setup()
 
-    def send_html(self, html, status=200):
-        body = html.encode("utf-8")
-        self.send_response(status)
+    def log_message(self, fmt, *args): pass
+
+    def current_user(self):
+        cookie = self.headers.get("Cookie", "")
+        sc = SimpleCookie(); sc.load(cookie)
+        tok = sc.get("duoweilai_session")
+        return get_user_by_session(tok.value) if tok else None
+
+    def set_session_cookie(self, token):
+        sc = SimpleCookie()
+        sc["duoweilai_session"] = token
+        sc["duoweilai_session"]["path"] = "/"
+        sc["duoweilai_session"]["max-age"] = 2592000
+        sc["duoweilai_session"]["httponly"] = True
+        sc["duoweilai_session"]["samesite"] = "Lax"
+        if SECURE_COOKIE: sc["duoweilai_session"]["secure"] = True
+        self._cookies.append(sc.output(header="").strip())
+
+    def clear_session_cookie(self):
+        self._cookies.append("duoweilai_session=; Path=/; Max-Age=0")
+
+    def _flush_cookies(self):
+        for c in self._cookies:
+            self.send_header("Set-Cookie", c)
+        self._cookies = []
+
+    def read_body(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length > MAX_BODY: raise ValueError("Request body too large")
+        return parse_qs(self.rfile.read(length).decode("utf-8") if length else "")
+
+    def send_html(self, html):
+        payload = html.encode("utf-8")
+        self.send_response(200)
+        self._flush_cookies()
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", len(body))
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(payload)
 
-    def send_json(self, data, status=200):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    def send_json(self, obj, status=200):
+        payload = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        self._flush_cookies()
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", len(body))
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(payload)
 
-    def read_json(self):
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+    def send_redirect(self, loc):
+        self.send_response(302)
+        self._flush_cookies()
+        self.send_header("Location", loc)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = unquote(parsed.path.rstrip("/") or "/")
-        user = self.get_current_user()
+        init_db()
+        user = self.current_user()
+        path = urlparse(self.path).path
+        uc = unread_count(user["id"]) if user else 0
 
-        if path == "/":
-            self.send_html(render_home(list_futures(12), user))
-        elif path == "/explore":
-            self.send_html(render_explore(list_futures(50), user))
-        elif path.startswith("/f/"):
-            short_id = path[3:].upper()
-            future = get_future_by_short(short_id)
-            if not future:
-                self.send_html("<h1>Future Seed not found</h1><p><a href='/'>Back home</a></p>", 404)
-                return
-            contribs = get_contributions(future["id"])
-            self.send_html(render_seed(future, contribs, user))
-        elif path.startswith("/world/"):
-            short_id = path[7:].upper()
-            future = get_future_by_short(short_id, inc_view=False)
-            if not future:
-                self.send_html("<h1>World not found</h1><p><a href='/'>Back home</a></p>", 404)
-                return
-            contribs = get_contributions(future["id"])
-            self.send_html(render_world(future, contribs, user))
-        elif path.startswith("/person/"):
-            name = path[8:].strip()
-            if not name:
-                self.send_html("<h1>Not found</h1>", 404)
-                return
-            data = get_creator_stats(name)
-            self.send_html(render_creator(name, data, user))
-        else:
-            self.send_html("<h1>404</h1><p><a href='/'>Home</a></p>", 404)
+        if path == "/":        return self.send_html(render_home(user))
+        if path == "/explore": return self.send_html(render_explore(user))
+        if path == "/login":   return self.send_html(render_login(user))
+        if path == "/register":return self.send_html(render_register(user))
+        if path == "/logout":
+            self.clear_session_cookie(); self.send_redirect("/"); return
+        if path == "/notifications": return self.send_html(render_notifications(user))
+        if path.startswith("/f/"):   return self.send_html(render_seed(user, path[3:]))
+        if path.startswith("/world/"):return self.send_html(render_world(user, path[7:]))
+        if path.startswith("/person/"):return self.send_html(render_person(user, unquote(path[8:])))
+        if path == "/api/notifications/read":
+            if user: mark_notifications_read(user["id"])
+            return self.send_json({"ok": True})
+
+        self.send_html(page(user, uc, "404",
+                            '<div class="container"><div class="empty">Page not found.</div></div>'))
 
     def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
+        init_db()
+        user = self.current_user()
+        path = urlparse(self.path).path
+        try: data = self.read_body()
+        except ValueError: return self.send_json({"ok": False, "error": "Body too large"}, 413)
+        f = lambda k: (data.get(k, [""])[0]).strip()
+
+        if path == "/api/register":
+            username, password = f("username"), f("password")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]{2,20}", username):
+                return self.send_html(render_register(None, "Username must be 2-20 letters, numbers, or underscores."))
+            if len(password) < 6:
+                return self.send_html(render_register(None, "Password must be at least 6 characters."))
+            uid = create_user(username, password)
+            if uid is None:
+                return self.send_html(render_register(None, "Username already taken."))
+            self.set_session_cookie(create_session(uid)); self.send_redirect("/"); return
+
+        if path == "/api/login":
+            uid = authenticate(f("username"), f("password"))
+            if uid is None:
+                return self.send_html(render_login(None, "Incorrect username or password."))
+            self.set_session_cookie(create_session(uid)); self.send_redirect("/"); return
+
+        if not user:
+            return self.send_json({"ok": False, "error": "Sign in required"}, 401)
 
         if path == "/api/future":
-            data = self.read_json()
-            body = (data.get("body") or "").strip()
-            if not body:
-                self.send_json({"error": "body required"}, 400)
-                return
-            creator = (data.get("creator") or "Anonymous").strip()[:40] or "Anonymous"
-            title = body.split("\n")[0][:120]
-            result = create_future(title, body, creator)
-            self.send_json(result)
-        elif path == "/api/contribute":
-            data = self.read_json()
-            future_id = data.get("future_id")
-            type_ = data.get("type")
-            title = (data.get("title") or "").strip()
-            if not future_id or not type_ or not title:
-                self.send_json({"error": "missing fields"}, 400)
-                return
-            if type_ not in ("people", "places", "stories", "rules", "objects", "branches"):
-                self.send_json({"error": "invalid type"}, 400)
-                return
-            body = (data.get("body") or "").strip()
-            creator = (data.get("creator") or "Anonymous").strip()[:40] or "Anonymous"
-            add_contribution(future_id, type_, title, body, creator)
-            self.send_json({"ok": True})
-        else:
-            self.send_json({"error": "not found"}, 404)
+            title = f("title")
+            if not title: return self.send_json({"ok": False, "error": "Title required"}, 400)
+            short = create_future(title, f("body"), user["username"], user["id"])
+            self.send_redirect(f"/f/{short}"); return
+
+        if path == "/api/contribute":
+            future_id, ctype, title = f("future_id"), f("type"), f("title")
+            if ctype not in TYPE_EN:
+                return self.send_json({"ok": False, "error": "Invalid type"}, 400)
+            if not title: return self.send_json({"ok": False, "error": "Title required"}, 400)
+            target = get_future_by_short(future_id)
+            if not target: return self.send_json({"ok": False, "error": "Future not found"}, 404)
+            add_contribution(target["id"], ctype, title, f("body"), user["username"], user["id"])
+            maybe_make_world(future_id)
+            if target["creator_id"] and target["creator_id"] != user["id"]:
+                t = TYPE_EN.get(ctype, ctype)
+                add_notification(target["creator_id"], user["id"], "contribute", future_id,
+                                 f'contributed a {t}: {title}')
+            self.send_redirect(f"/f/{future_id}"); return
+
+        if path == "/api/comment":
+            future_id, body = f("future_id"), f("body")
+            if not body: return self.send_json({"ok": False, "error": "Comment body required"}, 400)
+            target = get_future_by_short(future_id)
+            if not target: return self.send_json({"ok": False, "error": "Future not found"}, 404)
+            parent_id = int(f("parent_id")) if f("parent_id") else None
+            add_comment(target["id"], None, parent_id, user["id"], body)
+            if target["creator_id"] and target["creator_id"] != user["id"]:
+                add_notification(target["creator_id"], user["id"], "comment", future_id,
+                                 "commented on your future")
+            self.send_redirect(f"/f/{future_id}"); return
+
+        self.send_json({"ok": False, "error": "Unknown endpoint"}, 404)
 
 # -------------------------------------------------
-# Main
-# -------------------------------------------------
-if __name__ == "__main__":
+def main():
     init_db()
-    print(f"Duoweilai v0.2 running at {BASE_URL}")
-    print("Pages: /  /f/XXXXX  /world/XXXXX  /person/Name  /explore")
-    print("Identity: cookie-based name")
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopped.")
+    srv = ThreadingHTTPServer((BIND, PORT), Handler)
+    srv.daemon_threads = True
+    local = "127.0.0.1" if BIND == "127.0.0.1" else BIND
+    print(f"\n  Duoweilai v0.4  —  http://{local}:{PORT}")
+    print(f"  Database: {DB_PATH}")
+    print(f"  Bind: {BIND}  Port: {PORT}\n")
+    try: srv.serve_forever()
+    except KeyboardInterrupt: print("\n  Stopped.")
+
+if __name__ == "__main__": main()

@@ -147,6 +147,17 @@ def get_user_by_id(uid):
     row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     conn.close(); return row
 
+def ensure_default_user():
+    """Ensure the shared 'explorer' user exists. Returns its id.
+    Auto-login lets everyone skip registration during internal testing —
+    all activity is attributed to one account, "explorer"."""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE username=?", ("explorer",)).fetchone()
+    if row:
+        conn.close(); return row["id"]
+    conn.close()
+    return create_user("explorer", "explore-duoweilai")
+
 # -------------------------------------------------
 # Business
 # -------------------------------------------------
@@ -747,19 +758,19 @@ def page(user, unread, title, body, wide=False):
 <body>{_header(user, unread)}{body}</body></html>"""
 
 def _header(user, unread=0):
-    login = ('<a href="/login">Sign in</a><a href="/register">Sign up</a>'
-             if not user else
-             (f'<a href="/notifications" class="header-link">Notifications'
-              + (f'<span style="background:#ff7d7d;color:#0a0a0b;font-size:10px;border-radius:999px;padding:1px 5px;margin-left:4px">{unread}</span>' if unread else '')
-              + '</a>'
-              + f'<a href="/person/{quote(user["username"])}">{esc(user["username"])}</a>'
-              + '<a href="/logout">Sign out</a>'))
+    """Top navigation. Auth is auto-enabled, so we just show the username
+    + notifications bell. No sign-in / sign-up buttons."""
+    right = (f'<a href="/notifications">Notifications'
+             + (f'<span style="background:#ff7d7d;color:#0a0a0b;font-size:10px;border-radius:999px;padding:1px 5px;margin-left:4px">{unread}</span>' if unread else '')
+             + '</a>')
+    if user:
+        right += f'<a href="/person/{quote(user["username"])}">{esc(user["username"])}</a>'
     return f"""
 <header id="site-header">
   <a href="/" class="logo">Duoweilai</a>
   <div class="header-right">
     <a href="/explore">Explore</a>
-    {login}
+    {right}
   </div>
 </header>
 <script>
@@ -796,33 +807,22 @@ def render_home(user):
     else:
         feed_html = '<div class="empty">No futures yet — be the first to plant one.</div>'
 
-    # Publish form
-    if user:
-        publish = f"""
-        <div class="hero fade-in">
-          <h1>What future do you imagine?</h1>
-          <p>Write down a future. It becomes a permanent seed.</p>
+    # Publish form — auth is auto-enabled, so the publish box is always shown.
+    publish = f"""
+    <div class="hero fade-in">
+      <h1>What future do you imagine?</h1>
+      <p>Write down a future. It becomes a permanent seed.</p>
+    </div>
+    <form method="post" action="/api/future">
+      <div class="input-wrapper">
+        <textarea name="title" id="futureInput" placeholder="Describe a future..."
+                  rows="4"></textarea>
+        <div class="form-footer">
+          <span class="hint">Press ⌘+Enter to publish</span>
+          <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
         </div>
-        <form method="post" action="/api/future">
-          <div class="input-wrapper">
-            <textarea name="title" id="futureInput" placeholder="Describe a future..."
-                      rows="4"></textarea>
-            <div class="form-footer">
-              <span class="hint">Press ⌘+Enter to publish</span>
-              <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
-            </div>
-          </div>
-        </form>"""
-    else:
-        publish = f"""
-        <div class="hero fade-in">
-          <h1>What future do you imagine?</h1>
-          <p>Write down a future. It becomes a permanent seed.</p>
-        </div>
-        <div class="cta-box fade-in">
-          <p>Sign in to plant your first future seed.</p>
-          <a href="/register" class="btn-primary" style="display:inline-block;text-decoration:none">Get started</a>
-        </div>"""
+      </div>
+    </form>"""
 
     # Recent seeds for browsing
     futures = list_futures(6)
@@ -911,39 +911,33 @@ def render_seed(user, short):
                         f'<div style="font-size:12px;color:var(--subtle);margin-bottom:6px">{rel_time(cm["created_at"])}{reply_to}</div>'
                         f'<div style="font-size:14px;margin-top:4px">{esc(cm["body"])}</div></div>')
 
-    # Comment form
-    if user:
-        comment_form = f"""
-        <div class="comment-form">
-          <form method="post" action="/api/comment">
-            <input type="hidden" name="future_id" value="{short}">
-            <textarea name="body" placeholder="Share a thought on this future..." rows="3"></textarea>
-            <div style="margin-top:10px">
-              <button type="submit" class="btn-secondary">Post comment</button>
-            </div>
-          </form>
-        </div>"""
-    else:
-        comment_form = '<div class="alert" style="margin-top:16px"><a href="/login">Sign in</a> to leave a comment.</div>'
+    # Comment form — always available (auto-login)
+    comment_form = f"""
+    <div class="comment-form">
+      <form method="post" action="/api/comment">
+        <input type="hidden" name="future_id" value="{short}">
+        <textarea name="body" placeholder="Share a thought on this future..." rows="3"></textarea>
+        <div style="margin-top:10px">
+          <button type="submit" class="btn-secondary">Post comment</button>
+        </div>
+      </form>
+    </div>"""
 
-    # Contribute form
-    if user:
-        type_opts = "".join(f'<option value="{k}">{v}</option>' for k, v in TYPE_EN.items())
-        contribute_form = f"""
-        <div class="cta-box" style="margin-top:32px">
-          <p>Help this future grow. Add something to it.</p>
-          <form method="post" action="/api/contribute">
-            <input type="hidden" name="future_id" value="{short}">
-            <select name="type" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:12px">
-              {type_opts}
-            </select>
-            <input name="title" placeholder="Title" required style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px">
-            <textarea name="body" placeholder="Description (optional)" rows="3" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px"></textarea>
-            <button type="submit" class="btn-primary">Contribute</button>
-          </form>
-        </div>"""
-    else:
-        contribute_form = '<div class="alert" style="margin-top:16px"><a href="/login">Sign in</a> to contribute.</div>'
+    # Contribute form — always available (auto-login)
+    type_opts = "".join(f'<option value="{k}">{v}</option>' for k, v in TYPE_EN.items())
+    contribute_form = f"""
+    <div class="cta-box" style="margin-top:32px">
+      <p>Help this future grow. Add something to it.</p>
+      <form method="post" action="/api/contribute">
+        <input type="hidden" name="future_id" value="{short}">
+        <select name="type" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:12px">
+          {type_opts}
+        </select>
+        <input name="title" placeholder="Title" required style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px">
+        <textarea name="body" placeholder="Description (optional)" rows="3" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px"></textarea>
+        <button type="submit" class="btn-primary">Contribute</button>
+      </form>
+    </div>"""
 
     world_cta = ""
     if f["is_world"]:
@@ -1121,7 +1115,7 @@ def render_person(user, username):
     return page(user, unread_count(user["id"]) if user else 0, username, body)
 
 def render_notifications(user):
-    if not user: return _redirect("/login")
+    # user is always set due to auto-login
     notifs = get_notifications(user["id"])
     mark_notifications_read(user["id"])
 
@@ -1140,51 +1134,8 @@ def render_notifications(user):
     return page(user, 0, "Notifications",
                 f'<div class="container"><h1 style="font-size:20px;font-weight:500;margin-bottom:24px">Notifications</h1><div>{items}</div></div>')
 
-def render_login(user, error=None):
-    if user: return _redirect("/")
-    err = f'<div class="alert err" style="margin-bottom:16px">{esc(error)}</div>' if error else ""
-    body = f"""
-<div class="auth-wrap">
-  <h1 class="auth-title">Welcome back</h1>
-  <p class="auth-sub">Sign in to continue imagining futures.</p>
-  {err}
-  <form method="post" action="/api/login" class="auth-form">
-    <label>Username</label>
-    <input name="username" required autofocus placeholder="your name">
-    <label>Password</label>
-    <input name="password" type="password" required placeholder="········">
-    <div style="margin-top:20px">
-      <button type="submit" class="btn-primary" style="width:100%">Sign in</button>
-    </div>
-  </form>
-  <p style="text-align:center;margin-top:20px;font-size:14px;color:var(--muted)">
-    No account? <a href="/register" style="color:var(--fg)">Sign up</a>
-  </p>
-</div>"""
-    return page(None, 0, "Sign in", body)
-
-def render_register(user, error=None):
-    if user: return _redirect("/")
-    err = f'<div class="alert err" style="margin-bottom:16px">{esc(error)}</div>' if error else ""
-    body = f"""
-<div class="auth-wrap">
-  <h1 class="auth-title">Join Duoweilai</h1>
-  <p class="auth-sub">Create an identity and start imagining futures.</p>
-  {err}
-  <form method="post" action="/api/register" class="auth-form">
-    <label>Username</label>
-    <input name="username" required autofocus placeholder="your name (2-20 chars)">
-    <label>Password</label>
-    <input name="password" type="password" required placeholder="at least 6 characters">
-    <div style="margin-top:20px">
-      <button type="submit" class="btn-primary" style="width:100%">Create account</button>
-    </div>
-  </form>
-  <p style="text-align:center;margin-top:20px;font-size:14px;color:var(--muted)">
-    Already have one? <a href="/login" style="color:var(--fg)">Sign in</a>
-  </p>
-</div>"""
-    return page(None, 0, "Sign up", body)
+# Auth pages are disabled in this build (auto-login). render_login /
+# render_register were removed; /login and /register redirect to "/" instead.
 
 def _redirect(loc):
     return (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -1205,10 +1156,20 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
 
     def current_user(self):
+        """Auto-login: every visitor is treated as the shared 'explorer' user,
+        so registration and sign-in are bypassed entirely. Sessions are still
+        issued and read for future-proofing, but never required."""
         cookie = self.headers.get("Cookie", "")
         sc = SimpleCookie(); sc.load(cookie)
         tok = sc.get("duoweilai_session")
-        return get_user_by_session(tok.value) if tok else None
+        if tok:
+            user = get_user_by_session(tok.value)
+            if user: return user
+        # Auto-create / re-fetch the default user and set a cookie.
+        uid = ensure_default_user()
+        token = create_session(uid)
+        self.set_session_cookie(token)
+        return get_user_by_id(uid)
 
     def set_session_cookie(self, token):
         sc = SimpleCookie()
@@ -1266,10 +1227,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":        return self.send_html(render_home(user))
         if path == "/explore": return self.send_html(render_explore(user))
-        if path == "/login":   return self.send_html(render_login(user))
-        if path == "/register":return self.send_html(render_register(user))
+        # Auth routes are disabled — every visitor is auto-logged in.
+        if path == "/login" or path == "/register":
+            self.send_redirect("/"); return
+        # Sign-out is no longer meaningful, but redirect instead of 404.
         if path == "/logout":
-            self.clear_session_cookie(); self.send_redirect("/"); return
+            self.send_redirect("/"); return
         if path == "/notifications": return self.send_html(render_notifications(user))
         if path.startswith("/f/"):   return self.send_html(render_seed(user, path[3:]))
         if path.startswith("/world/"):return self.send_html(render_world(user, path[7:]))
@@ -1283,31 +1246,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         init_db()
-        user = self.current_user()
+        user = self.current_user()  # always non-None thanks to auto-login
         path = urlparse(self.path).path
         try: data = self.read_body()
         except ValueError: return self.send_json({"ok": False, "error": "Body too large"}, 413)
         f = lambda k: (data.get(k, [""])[0]).strip()
 
-        if path == "/api/register":
-            username, password = f("username"), f("password")
-            if not re.fullmatch(r"[A-Za-z0-9_\-]{2,20}", username):
-                return self.send_html(render_register(None, "Username must be 2-20 letters, numbers, or underscores."))
-            if len(password) < 6:
-                return self.send_html(render_register(None, "Password must be at least 6 characters."))
-            uid = create_user(username, password)
-            if uid is None:
-                return self.send_html(render_register(None, "Username already taken."))
-            self.set_session_cookie(create_session(uid)); self.send_redirect("/"); return
-
-        if path == "/api/login":
-            uid = authenticate(f("username"), f("password"))
-            if uid is None:
-                return self.send_html(render_login(None, "Incorrect username or password."))
-            self.set_session_cookie(create_session(uid)); self.send_redirect("/"); return
-
-        if not user:
-            return self.send_json({"ok": False, "error": "Sign in required"}, 401)
+        # Auth endpoints are disabled in this build — every visitor is auto-
+        # logged in as 'explorer'. Keep the routes as redirects so old links
+        # don't 404.
+        if path == "/api/register" or path == "/api/login":
+            self.send_redirect("/"); return
 
         if path == "/api/future":
             title = f("title")

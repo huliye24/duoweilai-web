@@ -1,10 +1,14 @@
-"""Full end-to-end API test with fresh DB."""
-import http.client, urllib.parse, re, sys
+"""End-to-end test for the no-auth build of Duoweilai v0.4.
+
+In this build everyone is auto-logged in as 'explorer', so all writes are
+attributed to the same user. The test publishes a future, contributes two
+items, comments, and checks the profile + explore pages.
+"""
+import http.client, urllib.parse, re, time, sys
 
 HOST, PORT = "localhost", 8080
 
 def req(method, path, data=None, cookie=None):
-    """Single-use connection for each request."""
     c = http.client.HTTPConnection(HOST, PORT, timeout=10)
     headers = {}
     body = None
@@ -17,128 +21,124 @@ def req(method, path, data=None, cookie=None):
     r = c.getresponse()
     raw = r.read().decode("utf-8")
     setcookie = r.getheader("Set-Cookie") or ""
+    location = r.getheader("Location") or ""
     c.close()
-    return r.status, raw, setcookie
+    return r.status, raw, setcookie, location
 
-def extract_token(sc):
-    m = re.search(r"duoweilai_session=([^;]+)", sc)
-    return m.group(1) if m else None
-
-def check(name, condition, detail=""):
-    ok = "[PASS]" if condition else "[FAIL]"
-    msg = f"  {ok} {name}"
-    if not condition and detail: msg += f" -- {detail}"
+def check(name, cond, detail=""):
+    msg = f"  [{'PASS' if cond else 'FAIL'}] {name}"
+    if not cond and detail: msg += f" -- {detail}"
     print(msg)
-    return condition
+    return cond
 
-print("\n=== Duoweilai v0.4 Full E2E Tests ===\n")
+passed = failed = 0
+def C(name, cond, detail=""):
+    global passed, failed
+    if check(name, cond, detail): passed += 1
+    else: failed += 1
 
-# Fresh user names (timestamp suffix to avoid collisions)
-import time
-suffix = str(int(time.time()))[-4:]
-alice_name = f"alice{suffix}"
-bob_name = f"bob{suffix}"
+print("\n=== Duoweilai v0.4 E2E (no-auth build) ===\n")
 
-# 1. Register alice
-st, raw, sc = req("POST", "/api/register", {"username": alice_name, "password": "secret123"})
-check(f"Register {alice_name} -> 302", st == 302, f"got {st}, body={raw[:100]}")
-alice_tok = extract_token(sc)
-check("Session cookie received", bool(alice_tok), f"sc={repr(sc)[:50]}")
+# 1. Auto-login on first GET
+st, raw, sc, loc = req("GET", "/")
+C("Home returns 200", st == 200)
+tok = re.search(r"duoweilai_session=([^;]+)", sc)
+session = tok.group(1) if tok else None
+C("Session cookie issued on first visit", bool(session))
 
-# 2. Register bob
-st, raw, sc = req("POST", "/api/register", {"username": bob_name, "password": "secret456"})
-check(f"Register {bob_name} -> 302", st == 302)
-bob_tok = extract_token(sc)
-check("Bob session cookie received", bool(bob_tok))
+# 2. Publish a future (no registration needed)
+title = f"A future for E2E testing {int(time.time())}"
+st, raw, sc, loc = req("POST", "/api/future",
+                       {"title": title, "body": "Testing the no-auth flow."},
+                       cookie=f"duoweilai_session={session}")
+C("Publish future returns 302", st == 302)
+m = re.search(r"/f/([A-Z2-9]{5})", loc)
+short = m.group(1) if m else None
+C("Got short ID from redirect location", bool(short), f"loc={loc}")
 
-# 3. Duplicate username
-st, raw, sc = req("POST", "/api/register", {"username": alice_name, "password": "xxxx"})
-check("Duplicate rejected -> 200", st == 200)
-check("Error message shown", "already taken" in raw)
+# 3. Seed detail page
+if short:
+    st, raw, sc, loc = req("GET", f"/f/{short}")
+    C("Seed page loads", st == 200)
+    C("Seed shows new title", title in raw)
+    C("Seed shows creator as explorer", "explorer" in raw)
+    C("Seed has Contribute form", "Contribute" in raw)
+    C("Seed has Post comment button", "Post comment" in raw)
 
-# 4. Wrong password
-st, raw, sc = req("POST", "/api/login", {"username": alice_name, "password": "wrong"})
-check("Wrong password -> 200", st == 200)
-check("Wrong password message", "Incorrect" in raw)
+# 4. Contribute (People)
+if short:
+    st, raw, sc, loc = req("POST", "/api/contribute",
+                          {"future_id": short, "type": "people",
+                           "title": "Maya — Night Navigator",
+                           "body": "Knows every rooftop in the city."},
+                          cookie=f"duoweilai_session={session}")
+    C("Contribute People -> 302", st == 302)
 
-# 5. Correct login
-st, raw, sc = req("POST", "/api/login", {"username": alice_name, "password": "secret123"})
-check("Correct login -> 302", st == 302)
-login_tok = extract_token(sc)
-check("Login cookie received", bool(login_tok))
+# 5. Contribute (Place)
+if short:
+    st, raw, sc, loc = req("POST", "/api/contribute",
+                          {"future_id": short, "type": "place",
+                           "title": "Rooftop Garden District",
+                           "body": "Where the best conversations happen."},
+                          cookie=f"duoweilai_session={session}")
+    C("Contribute Place -> 302", st == 302)
 
-# 6. Publish future
-st, raw, sc = req("POST", "/api/future",
-                   {"title": "What if cities only came alive at night?",
-                    "body": "Daytime is for preparation. Night is for living."},
-                   cookie=f"duoweilai_session={login_tok}")
-check("Publish future -> 302", st == 302, f"got {st}")
-m = re.search(r'/f/([A-Z2-9]{5})', raw)
-short = m.group(1) if m else "(not in body)"
-check("Redirect body has /f/ short ID", m is not None, f"body={raw[:100]}")
-if not m:
-    # Check Location header via redirect
-    # Actually, let's check if the short ID is anywhere
-    # The redirect body should have the /f/ link
-    pass
+# 6. Comment
+if short:
+    st, raw, sc, loc = req("POST", "/api/comment",
+                          {"future_id": short, "body": "Love this future!"},
+                          cookie=f"duoweilai_session={session}")
+    C("Comment -> 302", st == 302)
 
-# 7. Unauthenticated publish
-st, raw, sc = req("POST", "/api/future", {"title": "x", "body": "y"})
-check("Unauthenticated -> 401", st == 401)
+# 7. Seed detail shows contributions
+if short:
+    st, raw, sc, loc = req("GET", f"/f/{short}")
+    C("Seed shows Maya contribution", "Maya" in raw and "Night Navigator" in raw)
+    C("Seed shows Rooftop contribution", "Rooftop Garden District" in raw)
+    C("Seed shows comment", "Love this future!" in raw)
+    C("Seed shows branch count >=2", "Growing Content" in raw)
 
-# 8. Get explore page
-st, raw, sc = req("GET", "/explore")
-check("Explore page loads", st == 200)
-check("Explore has English content", "Browse the futures" in raw)
-check("Explore shows future", "cities only came alive" in raw)
+# 8. Explore page
+st, raw, sc, loc = req("GET", "/explore")
+C("Explore page loads", st == 200)
+C("Explore shows our new future", title in raw)
 
-# 9. Get seed page
-if m:
-    st, raw, sc = req("GET", f"/f/{m.group(1)}")
-    check("Seed detail page loads", st == 200)
-    check("Seed shows title", "cities only came alive" in raw)
-    check("Seed has Contribute form", "Contribute" in raw)
-    check("Seed has English labels", "People" in raw and "Place" in raw and "Story" in raw)
+# 9. Profile page
+st, raw, sc, loc = req("GET", "/person/explorer")
+C("Profile page loads", st == 200)
+C("Profile has English stats", "Futures" in raw and "Contributions" in raw)
+C("Profile shows explorer's futures", title in raw)
 
-    # 10. Contribute (People type)
-    st, raw, sc = req("POST", "/api/contribute",
-                      {"future_id": m.group(1), "type": "people",
-                       "title": "Maya — Night Navigator",
-                       "body": "Knows every rooftop in the city."},
-                      cookie=f"duoweilai_session={login_tok}")
-    check("Contribute People -> 302", st == 302)
+# 10. Notifications page (auto-login gives empty notifs)
+st, raw, sc, loc = req("GET", "/notifications")
+C("Notifications page loads", st == 200)
+C("Notifications page has English title", "Notifications" in raw)
 
-    # 11. Bob contributes Place
-    st, raw, sc = req("POST", "/api/contribute",
-                      {"future_id": m.group(1), "type": "place",
-                       "title": "Rooftop Garden District",
-                       "body": "Where the best conversations happen."},
-                      cookie=f"duoweilai_session={bob_tok}")
-    check("Contribute Place (bob) -> 302", st == 302)
+# 11. Auth routes redirect (no broken links)
+for p in ["/login", "/register", "/logout"]:
+    st, raw, sc, loc = req("GET", p)
+    C(f"GET {p} redirects to /", st == 302 and loc == "/")
+for p in ["/api/register", "/api/login"]:
+    st, raw, sc, loc = req("POST", p, {"username": "x", "password": "y"})
+    C(f"POST {p} redirects to /", st == 302 and loc == "/")
 
-    # 12. Comment
-    st, raw, sc = req("POST", "/api/comment",
-                      {"future_id": m.group(1), "body": "This is exactly what I was thinking about!"},
-                      cookie=f"duoweilai_session={bob_tok}")
-    check("Comment -> 302", st == 302)
+# 12. World auto-upgrade (need 5 contributions)
+if short:
+    for i in range(5):
+        req("POST", "/api/contribute",
+            {"future_id": short, "type": "story",
+             "title": f"Test story {i}", "body": "filler"},
+            cookie=f"duoweilai_session={session}")
+    st, raw, sc, loc = req("GET", f"/f/{short}")
+    C("After 5+ contributions, seed is a World", "World" in raw)
 
-    # 13. Notifications
-    st, raw, sc = req("GET", "/notifications", cookie=f"duoweilai_session={login_tok}")
-    check("Notifications page loads", st == 200)
-    check("Has English notification", "commented on your future" in raw)
+# 13. CSS design language preserved
+st, raw, sc, loc = req("GET", "/")
+C("Inter font present", "fonts.googleapis.com" in raw and "Inter" in raw)
+C("Dark theme variables present", "--bg" in raw)
+C("Pill buttons present", "999px" in raw)
+C("Dashed CTA box present", "dashed" in raw)
+C("English-only UI", "多未来" not in raw and "发布" not in raw)
 
-    # 14. Profile page
-    st, raw, sc = req("GET", f"/person/{alice_name}", cookie=f"duoweilai_session={login_tok}")
-    check("Profile page loads", st == 200)
-    check("Profile has English", "Futures" in raw and "Contributions" in raw)
-
-# 15. CSS / design language
-st, raw, sc = req("GET", "/")
-check("Inter font in CSS", "fonts.googleapis.com" in raw and "Inter" in raw)
-check("Dark theme CSS vars", "--bg" in raw)
-check("Pill buttons (999px)", "999px" in raw)
-check("Dashed CTA boxes", "dashed" in raw)
-check("seed-card class", "seed-card" in raw)
-check("No Chinese anywhere", "多未来" not in raw and "发布" not in raw and "探索" not in raw)
-
-print("\n=== Done ===\n")
+print(f"\n=== Results: {passed} passed, {failed} failed ===\n")
+sys.exit(0 if failed == 0 else 1)

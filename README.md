@@ -57,12 +57,13 @@ DUOWEILAI_PORT=3000 python server.py
 
 ## Features
 
+- **No-auth mode** — every visitor is auto-logged in as `explorer`, no sign-up/sign-in required (great for internal testing)
 - **Future Seeds** — permanent, shareable "what if" imagination units
 - **Contributions** — add People, Places, Stories, Rules, Objects, or Branches to a seed
 - **Comments** — discuss each future
 - **Worlds** — seeds with 5+ contributions auto-upgrade to World status
 - **Notifications** — know when someone engages with your futures
-- **User accounts** — cookie-based sessions, no email required
+- **User accounts** — cookie-based sessions, no email required (disabled in current build)
 
 ---
 

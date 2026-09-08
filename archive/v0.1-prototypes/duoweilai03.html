@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Explore Futures — Duoweilai</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap');
+
+    :root {
+      --bg: #0a0a0b;
+      --fg: #f4f4f5;
+      --muted: #a1a1aa;
+      --subtle: #71717a;
+      --border: #27272a;
+      --card: #111113;
+      --hover: #18181b;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(10,10,11,0.85);
+      backdrop-filter: blur(12px);
+      padding: 16px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid transparent;
+    }
+    header.scrolled { border-bottom-color: var(--border); }
+
+    .logo {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg);
+      text-decoration: none;
+    }
+
+    .header-right a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: 20px;
+      transition: color 0.2s;
+    }
+    .header-right a:hover { color: var(--fg); }
+    .header-right a.active { color: var(--fg); }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px 100px;
+    }
+
+    .page-title {
+      font-size: 28px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+
+    .page-desc {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 48px;
+    }
+
+    /* Categories */
+    .categories {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 48px;
+    }
+
+    .cat-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+    .cat-btn:hover,
+    .cat-btn.active {
+      border-color: #3f3f46;
+      color: var(--fg);
+      background: rgba(255,255,255,0.03);
+    }
+
+    /* Future Questions Grid */
+    .section-label {
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--subtle);
+      margin-bottom: 20px;
+    }
+
+    .questions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 64px;
+    }
+
+    .question-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 20px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 140px;
+    }
+    .question-card:hover {
+      border-color: #3f3f46;
+      background: var(--hover);
+      transform: translateY(-1px);
+    }
+
+    .question-card .q {
+      font-size: 16px;
+      font-weight: 400;
+      line-height: 1.45;
+      flex: 1;
+    }
+
+    .question-card .meta {
+      font-size: 12px;
+      color: var(--subtle);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Growing Seeds */
+    .seeds-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .seed-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+      gap: 16px;
+    }
+    .seed-row:hover {
+      border-color: #3f3f46;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .seed-row .title {
+      font-size: 15px;
+      flex: 1;
+    }
+
+    .seed-row .info {
+      font-size: 12px;
+      color: var(--subtle);
+      white-space: nowrap;
+    }
+
+    footer {
+      text-align: center;
+      padding: 32px;
+      font-size: 12px;
+      color: #3f3f46;
+    }
+
+    @media (max-width: 640px) {
+      header { padding: 14px 16px; }
+      .container { padding: 32px 16px 80px; }
+      .seed-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header id="header">
+    <a href="duoweilai.html" class="logo">Duoweilai</a>
+    <div class="header-right">
+      <a href="duoweilai03.html" class="active">Explore</a>
+      <a href="duoweilai.html">Create</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <h1 class="page-title">Explore Futures</h1>
+    <p class="page-desc">不是按内容类型，而是按我们共同关心的未来问题。</p>
+
+    <!-- Categories -->
+    <div class="categories">
+      <button class="cat-btn active">All</button>
+      <button class="cat-btn">Life</button>
+      <button class="cat-btn">Cities</button>
+      <button class="cat-btn">Education</button>
+      <button class="cat-btn">Culture</button>
+      <button class="cat-btn">Relationships</button>
+      <button class="cat-btn">Work</button>
+      <button class="cat-btn">Civilization</button>
+      <button class="cat-btn">Technology</button>
+      <button class="cat-btn">Unknown</button>
+    </div>
+
+    <!-- Future Questions -->
+    <div class="section-label">Future Questions</div>
+    <div class="questions-grid">
+      <a href="duoweilai02.html" class="question-card">
+        <div class="q">如果大学没有固定校园，而是在世界各地不断移动？</div>
+        <div class="meta">
+          <span>Education</span>
+          <span>42 seeds</span>
+        </div>
+      </a>
+      <a href="duoweilai02.html" class="question-card">
+        <div class="q">如果城市在夜间才真正苏醒，会发生什么？</div>
+        <div class="meta">
+          <span>Cities</span>
+          <span>28 seeds</span>
+        </div>
+      </a>
+      <a href="duoweilai02.html" class="question-card">
+        <div class="q">每个人都能拥有一座漂浮在海上的图书馆</div>
+        <div class="meta">
+          <span>Culture</span>
+          <span>19 seeds</span>
+        </div>
+      </a>
+      <a href="duoweilai02.html" class="question-card">
+        <div class="q">如果工作不再需要固定地点，信任如何建立？</div>
+        <div class="meta">
+          <span>Work</span>
+          <span>35 seeds</span>
+        </div>
+      </a>
+      <a href="duoweilai02.html" class="question-card">
+        <div class="q">当人类开始在多个星球生活，什么会成为共同记忆？</div>
+        <div class="meta">
+          <span>Civilization</span>
+          <span>14 seeds</span>
+        </div>
+      </a>
+      <a href="duoweilai02.html" class="question-card">
+        <div class="q">如果亲密关系可以跨越时间和空间，会是什么样子？</div>
+        <div class="meta">
+          <span>Relationships</span>
+          <span>31 seeds</span>
+        </div>
+      </a>
+    </div>
+
+    <!-- Recently Growing -->
+    <div class="section-label">Recently Growing</div>
+    <div class="seeds-list">
+      <a href="duoweilai05.html" class="seed-row">
+        <span class="title">铁路大学：沿着旧铁路线移动的学期</span>
+        <span class="info">Education · 18 branches</span>
+      </a>
+      <a href="duoweilai05.html" class="seed-row">
+        <span class="title">夜间城市：当白天只是准备，夜晚才是生活</span>
+        <span class="info">Cities · 12 branches</span>
+      </a>
+      <a href="duoweilai05.html" class="seed-row">
+        <span class="title">海上图书馆：每一本书都有自己的航线</span>
+        <span class="info">Culture · 9 branches</span>
+      </a>
+      <a href="duoweilai05.html" class="seed-row">
+        <span class="title">如果学分用「走过的城市」来计算</span>
+        <span class="info">Education · 7 branches</span>
+      </a>
+      <a href="duoweilai05.html" class="seed-row">
+        <span class="title">信任协议：没有办公室的协作如何运转</span>
+        <span class="info">Work · 15 branches</span>
+      </a>
+    </div>
+  </div>
+
+  <footer>The Duoweilai Web</footer>
+
+  <script>
+    const header = document.getElementById('header');
+    window.addEventListener('scroll', () => {
+      header.classList.toggle('scrolled', window.scrollY > 10);
+    });
+
+    // Simple category toggle
+    document.querySelectorAll('.cat-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

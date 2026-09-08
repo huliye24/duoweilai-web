@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# SQLite 数据库（本地运行时数据，不入库）
+*.db
+*.sqlite
+*.sqlite3
+
+# 归档快照 / 构建产物
+*.zip
+
+# 操作系统 / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

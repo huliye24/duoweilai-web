@@ -1,0 +1,554 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ocean University — Duoweilai</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap');
+
+    :root {
+      --bg: #0a0a0b;
+      --fg: #f4f4f5;
+      --muted: #a1a1aa;
+      --subtle: #71717a;
+      --border: #27272a;
+      --card: #111113;
+      --hover: #18181b;
+      --sidebar-width: 220px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* Header */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(10,10,11,0.9);
+      backdrop-filter: blur(12px);
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg);
+      text-decoration: none;
+    }
+
+    .header-right {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .header-right a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .header-right a:hover { color: var(--fg); }
+
+    /* Layout */
+    .layout {
+      display: flex;
+      max-width: 1100px;
+      margin: 0 auto;
+      min-height: calc(100vh - 53px);
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      flex-shrink: 0;
+      padding: 32px 20px 40px;
+      border-right: 1px solid var(--border);
+      position: sticky;
+      top: 53px;
+      height: calc(100vh - 53px);
+      overflow-y: auto;
+    }
+
+    .sidebar-label {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--subtle);
+      margin-bottom: 12px;
+      padding-left: 10px;
+    }
+
+    .nav-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .nav-list a {
+      display: block;
+      padding: 8px 10px;
+      font-size: 13.5px;
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 8px;
+      transition: all 0.15s;
+    }
+    .nav-list a:hover {
+      color: var(--fg);
+      background: rgba(255,255,255,0.04);
+    }
+    .nav-list a.active {
+      color: var(--fg);
+      background: rgba(255,255,255,0.06);
+    }
+
+    /* Main Content */
+    .main {
+      flex: 1;
+      padding: 40px 40px 80px;
+      max-width: 680px;
+    }
+
+    /* World Header */
+    .world-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--subtle);
+      margin-bottom: 16px;
+    }
+
+    .world-badge span {
+      background: rgba(255,255,255,0.06);
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+
+    .world-title {
+      font-size: clamp(28px, 4vw, 36px);
+      font-weight: 400;
+      letter-spacing: -0.03em;
+      line-height: 1.25;
+      margin-bottom: 10px;
+    }
+
+    .world-tagline {
+      font-size: 17px;
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+
+    .world-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      font-size: 13px;
+      color: var(--subtle);
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 36px;
+    }
+
+    .world-meta strong {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    /* Overview Section */
+    .section {
+      margin-bottom: 48px;
+    }
+
+    .section-title {
+      font-size: 15px;
+      font-weight: 500;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .section-title a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 400;
+    }
+    .section-title a:hover { color: var(--fg); }
+
+    .overview-text {
+      font-size: 16px;
+      color: #e4e4e7;
+      line-height: 1.75;
+      margin-bottom: 24px;
+    }
+
+    /* Cards Grid */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .card:hover {
+      border-color: #3f3f46;
+      background: var(--hover);
+    }
+
+    .card .name {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .card .desc {
+      font-size: 12.5px;
+      color: var(--subtle);
+      line-height: 1.4;
+    }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      padding-left: 20px;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 5px;
+      top: 6px;
+      bottom: 6px;
+      width: 1px;
+      background: var(--border);
+    }
+
+    .timeline-item {
+      position: relative;
+      padding-bottom: 24px;
+    }
+
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -17px;
+      top: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3f3f46;
+      border: 2px solid var(--bg);
+    }
+
+    .timeline-item .date {
+      font-size: 12px;
+      color: var(--subtle);
+      margin-bottom: 4px;
+    }
+
+    .timeline-item .event {
+      font-size: 14.5px;
+    }
+
+    /* Contributors */
+    .contributors {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .contributor {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px 6px 6px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      text-decoration: none;
+      color: inherit;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+    .contributor:hover {
+      border-color: #3f3f46;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .contributor .av {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #27272a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* CTA */
+    .world-cta {
+      margin-top: 56px;
+      padding: 28px;
+      border: 1px dashed #3f3f46;
+      border-radius: 16px;
+      text-align: center;
+    }
+
+    .world-cta p {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    .world-cta button {
+      background: var(--fg);
+      color: var(--bg);
+      border: none;
+      border-radius: 999px;
+      padding: 11px 24px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.2s;
+    }
+    .world-cta button:hover { opacity: 0.9; }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      font-size: 12px;
+      color: #3f3f46;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Mobile */
+    @media (max-width: 800px) {
+      .layout { flex-direction: column; }
+      .sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 20px 16px;
+      }
+      .nav-list {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .nav-list a {
+        padding: 6px 12px;
+        font-size: 13px;
+        background: rgba(255,255,255,0.03);
+      }
+      .main { padding: 32px 20px 60px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="duoweilai.html" class="logo">Duoweilai</a>
+    <div class="header-right">
+      <a href="duoweilai03.html">Explore</a>
+      <a href="duoweilai02.html">Original Seed</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-label">World</div>
+      <ul class="nav-list">
+        <li><a href="#overview" class="active">Overview</a></li>
+        <li><a href="#history">History</a></li>
+        <li><a href="#people">People</a></li>
+        <li><a href="#places">Places</a></li>
+        <li><a href="#stories">Stories</a></li>
+        <li><a href="#culture">Culture</a></li>
+        <li><a href="#institutions">Institutions</a></li>
+        <li><a href="#objects">Objects</a></li>
+        <li><a href="#branches">Branches</a></li>
+        <li><a href="#timeline">Timeline</a></li>
+      </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <div class="world-badge">
+        World
+        <span>Growing</span>
+      </div>
+
+      <h1 class="world-title">Ocean University</h1>
+      <p class="world-tagline">A World on the Move</p>
+
+      <div class="world-meta">
+        <span>Started from <a href="duoweilai02.html" style="color: inherit; text-decoration: underline;"><strong>Future Seed #000128</strong></a></span>
+        <span><strong>47</strong> people</span>
+        <span><strong>12</strong> places</span>
+        <span><strong>31</strong> stories</span>
+        <span>Since 8 Sep 2026</span>
+      </div>
+
+      <!-- Overview -->
+      <section class="section" id="overview">
+        <div class="section-title">Overview</div>
+        <div class="overview-text">Ocean University 是一个没有固定校园的大学。它的学期在港口之间移动，有时在船上，有时在临时租用的仓库或废弃火车站。学生和老师一起旅行，知识随着人流动。每一届都会留下自己的痕迹，形成一个不断生长的移动共同体。</div>
+      </section>
+
+      <!-- People -->
+      <section class="section" id="people">
+        <div class="section-title">
+          People
+          <a href="#people">View all →</a>
+        </div>
+        <div class="cards">
+          <a href="duoweilai04.html" class="card">
+            <div class="name">Maya</div>
+            <div class="desc">航海教师 · 负责第一学期的海上课程</div>
+          </a>
+          <a href="duoweilai04.html" class="card">
+            <div class="name">Kai</div>
+            <div class="desc">学生 · 提出了「用走过的城市计算学分」</div>
+          </a>
+          <a href="duoweilai04.html" class="card">
+            <div class="name">Lina</div>
+            <div class="desc">档案员 · 记录每一站留下的痕迹</div>
+          </a>
+          <a href="duoweilai04.html" class="card">
+            <div class="name">Raphael</div>
+            <div class="desc">创始人 · 启动了这个未来</div>
+          </a>
+        </div>
+      </section>
+
+      <!-- Places -->
+      <section class="section" id="places">
+        <div class="section-title">
+          Places
+          <a href="#places">View all →</a>
+        </div>
+        <div class="cards">
+          <a href="#" class="card">
+            <div class="name">Port 17</div>
+            <div class="desc">第一个学期开始的港口</div>
+          </a>
+          <a href="#" class="card">
+            <div class="name">The 73rd Day Ship</div>
+            <div class="desc">整艘船就是校园的那次学期</div>
+          </a>
+          <a href="#" class="card">
+            <div class="name">Old Railway Station</div>
+            <div class="desc">临时改造成教室的废弃车站</div>
+          </a>
+        </div>
+      </section>
+
+      <!-- Stories -->
+      <section class="section" id="stories">
+        <div class="section-title">
+          Stories
+          <a href="#stories">View all →</a>
+        </div>
+        <div class="cards">
+          <a href="#" class="card">
+            <div class="name">The 73rd Day</div>
+            <div class="desc">当船在海上遇到风暴，课程变成了另一件事</div>
+          </a>
+          <a href="#" class="card">
+            <div class="name">Leaving Port 17</div>
+            <div class="desc">第一批学生离开的那个早晨</div>
+          </a>
+          <a href="#" class="card">
+            <div class="name">The Map That Keeps Changing</div>
+            <div class="desc">没有人能画出完整的路线图</div>
+          </a>
+        </div>
+      </section>
+
+      <!-- Timeline -->
+      <section class="section" id="timeline">
+        <div class="section-title">Timeline</div>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="date">8 Sep 2026</div>
+            <div class="event">Raphael 发布了原始 Future Seed</div>
+          </div>
+          <div class="timeline-item">
+            <div class="date">9 Sep 2026</div>
+            <div class="event">Maya 创建了第一个分支「铁路大学」</div>
+          </div>
+          <div class="timeline-item">
+            <div class="date">11 Sep 2026</div>
+            <div class="event">Kai 提出「用走过的城市计算学分」规则</div>
+          </div>
+          <div class="timeline-item">
+            <div class="date">14 Sep 2026</div>
+            <div class="event">世界正式命名为 Ocean University</div>
+          </div>
+          <div class="timeline-item">
+            <div class="date">Recent</div>
+            <div class="event">已有 47 人参与建造，31 个故事被写下</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Contributors -->
+      <section class="section">
+        <div class="section-title">Contributors</div>
+        <div class="contributors">
+          <a href="duoweilai04.html" class="contributor"><span class="av">R</span> Raphael</a>
+          <a href="duoweilai04.html" class="contributor"><span class="av">M</span> Maya</a>
+          <a href="duoweilai04.html" class="contributor"><span class="av">K</span> Kai</a>
+          <a href="duoweilai04.html" class="contributor"><span class="av">L</span> Lina</a>
+          <a href="duoweilai04.html" class="contributor"><span class="av">+</span> 43 more</a>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <div class="world-cta">
+        <p>这个世界还在生长。你可以继续建造它。</p>
+        <button>Contribute to this World</button>
+      </div>
+    </main>
+  </div>
+
+  <footer>
+    duoweilai.com/world/ocean-university
+  </footer>
+</body>
+</html>

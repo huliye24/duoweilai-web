@@ -1,0 +1,342 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Raphael — Duoweilai</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap');
+
+    :root {
+      --bg: #0a0a0b;
+      --fg: #f4f4f5;
+      --muted: #a1a1aa;
+      --subtle: #71717a;
+      --border: #27272a;
+      --card: #111113;
+      --hover: #18181b;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(10,10,11,0.85);
+      backdrop-filter: blur(12px);
+      padding: 16px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid transparent;
+    }
+    header.scrolled { border-bottom-color: var(--border); }
+
+    .logo {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg);
+      text-decoration: none;
+    }
+
+    .header-right a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: 20px;
+      transition: color 0.2s;
+    }
+    .header-right a:hover { color: var(--fg); }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 24px 100px;
+    }
+
+    /* Profile */
+    .profile {
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+
+    .avatar-lg {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: #27272a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 500;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .profile-info h1 {
+      font-size: 24px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+
+    .profile-info .bio {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 16px;
+      max-width: 420px;
+    }
+
+    /* Stats — the cultural difference */
+    .stats {
+      display: flex;
+      gap: 28px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .stat-num {
+      font-size: 20px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--subtle);
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 24px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 28px;
+    }
+
+    .tab {
+      font-size: 14px;
+      color: var(--subtle);
+      padding-bottom: 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      font-family: inherit;
+    }
+    .tab:hover { color: var(--muted); }
+    .tab.active {
+      color: var(--fg);
+      border-bottom-color: var(--fg);
+    }
+
+    /* Lists */
+    .item-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+      gap: 16px;
+    }
+    .item:hover {
+      border-color: #3f3f46;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .item .title {
+      font-size: 15px;
+      flex: 1;
+    }
+
+    .item .meta {
+      font-size: 12px;
+      color: var(--subtle);
+      white-space: nowrap;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--subtle);
+      font-size: 14px;
+    }
+
+    footer {
+      text-align: center;
+      padding: 32px;
+      font-size: 12px;
+      color: #3f3f46;
+    }
+
+    @media (max-width: 640px) {
+      header { padding: 14px 16px; }
+      .container { padding: 32px 16px 80px; }
+      .profile { flex-direction: column; align-items: center; text-align: center; }
+      .profile-info .bio { margin-left: auto; margin-right: auto; }
+      .stats { justify-content: center; }
+      .item { flex-direction: column; align-items: flex-start; gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header id="header">
+    <a href="duoweilai.html" class="logo">Duoweilai</a>
+    <div class="header-right">
+      <a href="duoweilai03.html">Explore</a>
+      <a href="duoweilai.html">Create</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Profile -->
+    <div class="profile">
+      <div class="avatar-lg">R</div>
+      <div class="profile-info">
+        <h1>Raphael</h1>
+        <p class="bio">在想象与建造未来之间来回走。</p>
+        <div class="stats">
+          <div class="stat">
+            <span class="stat-num">12</span>
+            <span class="stat-label">Futures</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">3</span>
+            <span class="stat-label">Worlds</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">29</span>
+            <span class="stat-label">Branches</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">87</span>
+            <span class="stat-label">Contributions</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="started">Futures I Started</button>
+      <button class="tab" data-tab="built">Worlds I Helped Build</button>
+      <button class="tab" data-tab="contributions">Contributions</button>
+    </div>
+
+    <!-- Futures I Started -->
+    <div class="tab-content" id="started">
+      <div class="item-list">
+        <a href="duoweilai02.html" class="item">
+          <span class="title">未来大学没有校园，而是在世界各地不断移动</span>
+          <span class="meta">18 branches · Growing</span>
+        </a>
+        <a href="duoweilai02.html" class="item">
+          <span class="title">如果城市在夜间才真正苏醒</span>
+          <span class="meta">12 branches · Growing</span>
+        </a>
+        <a href="duoweilai02.html" class="item">
+          <span class="title">每个人都能拥有一座漂浮在海上的图书馆</span>
+          <span class="meta">9 branches · Growing</span>
+        </a>
+        <a href="duoweilai02.html" class="item">
+          <span class="title">当人类开始在多个星球生活，什么会成为共同记忆？</span>
+          <span class="meta">4 branches</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Worlds I Helped Build -->
+    <div class="tab-content" id="built" style="display:none;">
+      <div class="item-list">
+        <a href="duoweilai05.html" class="item">
+          <span class="title">Ocean University</span>
+          <span class="meta">A World on the Move · 47 people</span>
+        </a>
+        <a href="duoweilai05.html" class="item">
+          <span class="title">Night City</span>
+          <span class="meta">When the day is only preparation · 31 people</span>
+        </a>
+        <a href="duoweilai05.html" class="item">
+          <span class="title">Floating Libraries</span>
+          <span class="meta">Every book has its own route · 19 people</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Contributions -->
+    <div class="tab-content" id="contributions" style="display:none;">
+      <div class="item-list">
+        <a href="duoweilai05.html" class="item">
+          <span class="title">添加了人物「Maya · 航海教师」</span>
+          <span class="meta">Ocean University · 2d</span>
+        </a>
+        <a href="duoweilai05.html" class="item">
+          <span class="title">创建了分支「铁路大学」</span>
+          <span class="meta">移动大学 · 3d</span>
+        </a>
+        <a href="duoweilai05.html" class="item">
+          <span class="title">写下故事「第73天」</span>
+          <span class="meta">Night City · 5d</span>
+        </a>
+        <a href="duoweilai05.html" class="item">
+          <span class="title">定义了规则「学分用走过的城市计算」</span>
+          <span class="meta">移动大学 · 1w</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <footer>duoweilai.com/person/raphael</footer>
+
+  <script>
+    const header = document.getElementById('header');
+    window.addEventListener('scroll', () => {
+      header.classList.toggle('scrolled', window.scrollY > 10);
+    });
+
+    // Tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+        document.getElementById(tab.dataset.tab).style.display = 'block';
+      });
+    });
+  </script>
+</body>
+</html>

@@ -60,7 +60,10 @@ def _group_contributions(contribs):
 # -------------------------------------------------
 @web.route("/")
 def home():
-    return render_template("home.html", title="Home", futures=list_futures(6))
+    # Guests tour the world first — no composer on their home, so give
+    # them a fuller wall of seeds to walk into.
+    return render_template("home.html", title="Home",
+                           futures=list_futures(6 if g.user else 12))
 
 
 @web.route("/explore")
@@ -126,6 +129,13 @@ def register_page():
     if g.get("user"):
         return redirect("/")
     return render_template("register.html", title="Register", form={})
+
+
+@web.route("/welcome")
+def welcome():
+    """Post-registration reveal of the system-assigned ID (QQ-number moment)."""
+    sys_id = request.args.get("id", "") or (g.user["username"] if g.get("user") else "")
+    return render_template("welcome.html", title="Welcome", sys_id=sys_id)
 
 
 @web.route("/forgot")

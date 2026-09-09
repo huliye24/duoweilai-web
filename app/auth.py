@@ -1,8 +1,14 @@
 """Auth: passwords, sessions, cookies, CSRF, login gate.
 
-The v0.5 account flow is ported unchanged: username + password (pbkdf2),
-30-day session cookies (`duoweilai_session`), email-based password reset.
-New in the Flask build: double-submit-cookie CSRF on every POST.
+Accounts are QQ-style: registration takes only an email and a password,
+and the system assigns a numeric Duoweilai ID (stored as the username —
+"100001" and so on, sequential from 100000). Sign in with the ID or the
+email. Pretty numbers (靓号) are held back from auto-assignment and can be
+handed out deliberately via `python server.py adduser`.
+
+Ported from v0.5: pbkdf2 passwords, 30-day session cookies
+(`duoweilai_session`), email-based password reset. New in the Flask
+build: double-submit-cookie CSRF on every POST.
 """
 import functools
 import hashlib
@@ -18,6 +24,9 @@ CSRF_COOKIE = "duoweilai_csrf"
 SESSION_MAX_AGE = SESSION_MAX_AGE_DAYS * 86400  # 30 days, seconds
 
 _USERNAME_RE = re.compile(r"[A-Za-z0-9_]+")
+
+# System IDs start here — 6 digits, low numbers mean early members (QQ-style).
+ID_BASE = 100000
 
 
 # -------------------------------------------------
@@ -59,9 +68,61 @@ def create_user(username, password, email=None):
         return None
 
 
-def authenticate(username, password):
+def is_premium_id(n):
+    """靓号 heuristics: pretty numbers never auto-assigned — they're held
+    back for the operator to hand out (server.py adduser). Loose on
+    purpose; skipping a plain number costs nothing."""
+    s = str(n)
+    if len(set(s)) == 1:                              # 888888 — all same digit
+        return True
+    if s.endswith("000"):                             # 100000, 888000 — round
+        return True
+    if any(d * 4 in s for d in "0123456789"):         # 166666 — 4 in a row
+        return True
+    if len(s) >= 4:
+        a, b, c, d = s[-4:]
+        if a != d and (a == b and c == d              # AABB tail (…8866)
+                       or a == c and b == d):         # ABAB tail (…6868)
+            return True
+    pairs = list(zip(s, s[1:]))
+    if all(int(b) - int(a) == 1 for a, b in pairs):   # 123456 — ascending
+        return True
+    return all(int(a) - int(b) == 1 for a, b in pairs)  # 654321 — descending
+
+
+def next_system_id():
+    """Smallest unassigned ID above the current maximum, skipping 靓号."""
     db = get_db()
-    row = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    row = db.execute(
+        "SELECT MAX(CAST(username AS INTEGER)) AS maxid FROM users "
+        "WHERE username GLOB '[0-9]*'").fetchone()
+    n = max(ID_BASE - 1, row["maxid"] or 0)
+    while True:
+        n += 1
+        if not is_premium_id(n):
+            return str(n)
+
+
+def register_with_system_id(email, password, attempts=3):
+    """Create an account with a system-assigned ID (the username IS the
+    ID, like a QQ number). Returns the users.id, or None on failure —
+    the retry handles the rare race where two workers computed the same
+    next ID (UNIQUE(username) rejects the loser)."""
+    for _ in range(attempts):
+        sysid = next_system_id()
+        rowid = create_user(sysid, password, email)
+        if rowid:
+            return rowid
+    return None
+
+
+def authenticate(identifier, password):
+    """Sign in by system ID, email, or legacy v0.5 username."""
+    db = get_db()
+    if "@" in identifier:
+        row = get_user_by_email(identifier)
+    else:
+        row = get_user_by_username(identifier)
     return row["id"] if row and verify_password(password, row["password_hash"]) else None
 
 

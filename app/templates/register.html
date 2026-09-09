@@ -3,21 +3,16 @@
 <div class="container" style="max-width:420px">
   <div style="text-align:center;margin-bottom:32px">
     <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Join Duoweilai</h1>
-    <p style="color:var(--muted);font-size:14px">Pick an ID, set a password. One email — that's all.</p>
+    <p style="color:var(--muted);font-size:14px">Just an email and a password — we assign your Duoweilai ID, like a QQ number.</p>
   </div>
   {% if err %}<div class="alert err" style="margin-bottom:16px">{{ err }}</div>{% endif %}
   <form method="post" action="/api/register" autocomplete="off">
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:14px">Your ID</label>
-    <input name="username" value="{{ form.username }}" required minlength="3" maxlength="20"
-           pattern="[A-Za-z0-9_]+" title="3-20 letters, digits, underscore"
-           placeholder="e.g. alice, futuremaker"
-           class="text-input" style="font-size:15px">
-    <div style="font-size:12px;color:var(--subtle);margin-top:4px">3–20 letters / digits / underscore. This is how people find you.</div>
 
-    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Email <span style="color:#52525b">(for account recovery only)</span></label>
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:14px">Email</label>
     <input name="email" type="email" value="{{ form.email }}" required
            placeholder="you@example.com" class="text-input" style="font-size:15px">
+    <div style="font-size:12px;color:var(--subtle);margin-top:4px">Used to recover your account — nothing else.</div>
 
     <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Password</label>
     <input name="password" type="password" required minlength="6"

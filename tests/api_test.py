@@ -26,11 +26,14 @@ try:
     check("health ok", r.status == 200 and r.json()["ok"] is True)
     check("health reports version", r.json().get("version") == "0.6")
 
-    # -- 2. Register via JSON ------------------------------------------
-    r = c.post_json("/api/register", username="alice", email="alice@example.com",
+    # -- 2. Register via JSON (email + password -> system-assigned ID) --
+    r = c.post_json("/api/register", email="alice@example.com",
                     password="secret123")
-    check("JSON register -> envelope", r.status == 200
-          and r.json()["ok"] is True and r.json()["redirect"] == "/")
+    check("JSON register -> envelope with assigned ID", r.status == 200
+          and r.json()["ok"] is True and r.json()["id"] == "100010"
+          and r.json()["redirect"] == "/welcome?id=100010",
+          f"got {r.status} {r.text[:120]}")
+    alice_id = r.json()["id"]
     check("Session cookie set by JSON register", bool(c.session))
 
     # -- 3. Pagination: 13 seeds total ----------------------------------
@@ -126,9 +129,10 @@ try:
     # -- 8. Edits: owner-checked, always JSON -----------------------------------
     b = Client(server)  # bob
     b.prime("/api/health")
-    r = b.post_json("/api/register", username="bobb", email="bob@example.com",
-                    password="bobpass1")
-    check("second account registered", r.status == 200 and r.json()["ok"])
+    r = b.post_json("/api/register", email="bob@example.com", password="bobpass1")
+    check("second account registered with the next ID", r.status == 200
+          and r.json()["ok"] and r.json()["id"] == "100012")
+    bob_id = r.json()["id"]
 
     r = c.post_json(f"/api/future/{target}/edit",
                     title=f"Renamed by alice {stamp}", body="updated body",
@@ -148,7 +152,7 @@ try:
                     title="Bob's story", body="from bob")
     check("bob contributes", r.status == 200 and r.json()["ok"])
     contribs = c.get(f"/api/futures/{target}/contributions").json()["items"]
-    bob_contrib = next(x for x in contribs if x["creator"] == "bobb")
+    bob_contrib = next(x for x in contribs if x["creator"] == bob_id)
     r = b.post_json(f"/api/contribution/{bob_contrib['id']}/edit",
                     title="Bob's story v2", body="edited by bob")
     check("author edits own contribution", r.status == 200
@@ -162,8 +166,8 @@ try:
     r = b.post_json("/api/comment", future_id=target, body="Bob's comment")
     check("bob comments", r.status == 200)
     cms = c.get(f"/api/futures/{target}/comments").json()["items"]
-    alice_cm = next(x for x in cms if x["author"] == "alice")
-    bob_cm = next(x for x in cms if x["author"] == "bobb")
+    alice_cm = next(x for x in cms if x["author"] == alice_id)
+    bob_cm = next(x for x in cms if x["author"] == bob_id)
     check("comments carry parent_id (null at top level)",
           alice_cm["parent_id"] is None and bob_cm["parent_id"] is None)
     r = c.post_json(f"/api/comment/{alice_cm['id']}/edit",
@@ -216,7 +220,7 @@ try:
     check("reply accepted", r.status == 200)
     replies = c.get(f"/api/futures/{target}/comments").json()["items"]
     check("reply stored with parent_id",
-          any(x["parent_id"] == bob_cm["id"] and x["author"] == "alice"
+          any(x["parent_id"] == bob_cm["id"] and x["author"] == alice_id
               for x in replies))
     bn = b.get("/api/notifications").json()
     check("bob notified of the reply",
@@ -251,7 +255,7 @@ try:
           and "5000" in r.json()["error"])
 
     # -- 12. Misc reads -----------------------------------------------------------------
-    r = c.get("/api/users/alice").json()
+    r = c.get(f"/api/users/{alice_id}").json()
     check("user endpoint: stats", r["ok"] and r["registered"] is True
           and r["stats"]["futures"] >= 14 and r["stats"]["contributions"] >= 1)
     check("user endpoint: recent futures listed",

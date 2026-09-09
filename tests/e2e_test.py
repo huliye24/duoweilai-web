@@ -20,24 +20,28 @@ try:
     c = Client(server)
     print(f"\n=== Duoweilai v0.6 E2E (port {PORT}) ===\n")
 
-    # -- 1. Anonymous home -------------------------------------------
+    # -- 1. Anonymous home: the world first, auth in the background ---
     r = c.prime()
     check("Home returns 200", r.status == 200)
     check("CSRF cookie issued on first visit", bool(c.csrf))
-    check("Logged-out CTA shown", "Plant your first seed" in r.text)
+    check("Guest sees the world, not a login wall",
+          "A world of imagined futures" in r.text)
     check("Sign in link in nav", 'href="/login"' in r.text)
     check("Sign up link in nav", 'href="/register"' in r.text)
 
-    # -- 2. Register page + account ----------------------------------
+    # -- 2. Register page + account (email + password -> system ID) ---
     r = c.get("/register")
     check("Register page loads", r.status == 200 and "Join Duoweilai" in r.text)
-    r = c.post("/api/register", username="walkerb", email="walker@example.com",
-               password="secret123")
-    check("Register -> 302 to /", r.status == 302 and r.location == "/",
+    check("No username field on register page", 'name="username"' not in r.text)
+    r = c.post("/api/register", email="walker@example.com", password="secret123")
+    check("Register -> 302 to welcome reveal",
+          r.status == 302 and r.location == "/welcome?id=100010",
           f"got {r.status} {r.location}")
+    uid = r.location.split("=")[1] if r.location else ""
+    check("Assigned ID looks like a QQ number", uid.isdigit() and len(uid) == 6)
     check("Session cookie set on register", bool(c.session))
     r = c.get("/")
-    check("Header shows signed-in user", "walkerb" in r.text)
+    check("Header shows the assigned ID", uid in r.text)
     check("Publish form visible when signed in", "Publish a Future" in r.text)
 
     # -- 3. Publish a future (form POST) ------------------------------
@@ -55,7 +59,7 @@ try:
     check("Seed page loads", r.status == 200)
     check("Seed shows title", title in r.text)
     check("Seed shows category", "Cities" in r.text)
-    check("Seed shows creator", "walkerb" in r.text)
+    check("Seed shows creator ID", uid in r.text)
     check("Seed has Explore this Future grid", "Explore this Future" in r.text)
     check("Seed has Contribute CTA", "Contribute" in r.text)
     check("Seed has Post comment button", "Post comment" in r.text)
@@ -109,7 +113,7 @@ try:
     check("World page lists contributors", "Contributors" in r.text)
 
     # -- 10. Profile page ----------------------------------------------
-    r = c.get("/person/walkerb")
+    r = c.get(f"/person/{uid}")
     check("Profile page loads", r.status == 200)
     check("Profile shows stats labels", "Futures" in r.text and "Contributions" in r.text)
     check("Profile shows the seed", title in r.text)
@@ -119,16 +123,16 @@ try:
     check("Notifications page loads", r.status == 200 and "Notifications" in r.text)
     check("Welcome notification present", "Welcome to Duoweilai" in r.text)
 
-    # -- 12. Logout / login round-trip ----------------------------------
+    # -- 12. Logout / login round-trip (by system ID) --------------------
     r = c.get("/logout")
     check("Logout (GET link) -> 302 to /", r.status == 302 and r.location == "/")
     check("Session cookie cleared", not c.session)
     r = c.get("/")
-    check("Back to logged-out CTA", "Plant your first seed" in r.text)
-    r = c.post("/api/login", username="walkerb", password="secret123")
-    check("Login -> 302 to /", r.status == 302 and r.location == "/")
+    check("Back to guest view", "A world of imagined futures" in r.text)
+    r = c.post("/api/login", username=uid, password="secret123")
+    check("Login by ID -> 302 to /", r.status == 302 and r.location == "/")
     r = c.get("/")
-    check("Signed back in", "walkerb" in r.text)
+    check("Signed back in", uid in r.text)
 
     # -- 13. Anonymous write attempts ------------------------------------
     anon = Client(server)

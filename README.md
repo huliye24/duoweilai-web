@@ -27,7 +27,7 @@ python -m venv .venv
 
 Then open **http://localhost:8080** in your browser.
 
-> First run automatically creates `duoweilai.db`. Sign up from the **Sign up** link — accounts are real (register / login / password reset).
+> First run automatically creates `duoweilai.db`. The world is open to guests — browse everything without an account. Sign up (top-right **Sign up**) takes just an email and a password; the system assigns you a numeric **Duoweilai ID**, like a QQ number.
 
 ### Team (same network)
 
@@ -54,19 +54,21 @@ Other env vars: `DUOWEILAI_SECRET_KEY` (session signing), `DUOWEILAI_SECURE_COOK
 
 | Route | Description |
 |-------|-------------|
-| `/` | Home — publish a future seed |
+| `/` | Home — tour recent seeds (guests welcome); publish when signed in |
 | `/explore` | Browse futures — full-text search, category filter, pagination |
 | `/f/<id>` | Future Seed detail — contribute, comment, branch, edit |
 | `/world/<id>` | World view — rich multi-section exploration |
-| `/person/<username>` | User profile |
+| `/person/<id>` | User profile |
 | `/notifications` | Your notifications |
+| `/welcome` | Post-registration reveal of your assigned Duoweilai ID |
 | `/login` `/register` `/forgot` | Account |
 
 ---
 
 ## Features
 
-- **Real accounts** — register / login / logout, cookie sessions, password reset by email
+- **Guest browsing** — the whole world is readable without an account; sign-in only gates writing
+- **Real accounts** — email + password registration with a system-assigned numeric ID (QQ-style, pretty numbers reserved as 靓号: `python server.py adduser 888888 email pass`), login by ID or email, cookie sessions, password reset by email
 - **Future Seeds** — permanent, shareable "what if" imagination units
 - **Contributions** — add People, Places, Stories, Rules, Objects to a seed
 - **Branches** — spin a seed off into its own future; the parent page lists recent branches

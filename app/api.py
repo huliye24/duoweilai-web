@@ -50,43 +50,39 @@ def json_error(msg, status):
 
 
 # -------------------------------------------------
-# Auth endpoints (ported from v0.5, exact error strings)
+# Auth endpoints (v0.6: email + password -> system-assigned ID)
 # -------------------------------------------------
 @api.route("/register", methods=["POST"])
 def register():
-    username, email, password = (form_value("username"),
-                                  form_value("email"),
-                                  form_value("password"))
-    form = {"username": username, "email": email}
-    if not auth.valid_username(username):
-        return auth_error("register.html", "ID must be 3–20 letters, digits, or underscore.", form)
+    email, password = form_value("email"), form_value("password")
+    form = {"email": email}
     if not auth.valid_email(email):
         return auth_error("register.html", "Please enter a valid email.", form)
     if len(password) < 6:
         return auth_error("register.html", "Password must be at least 6 characters.", form)
-    if auth.get_user_by_username(username):
-        return auth_error("register.html", "That ID is already taken — pick another.", form)
     if auth.get_user_by_email(email):
         return auth_error("register.html",
                           "That email is already registered. Try signing in or using a different email.", form)
-    uid = auth.create_user(username, password, email)
+    uid = auth.register_with_system_id(email, password)
     if not uid:
-        return auth_error("register.html", "Could not create account — please try a different ID or email.", form)
+        return auth_error("register.html", "Could not create account — please try again.", form)
+    sys_id = auth.get_user_by_id(uid)["username"]
     services.add_notification(uid, uid, "welcome", None,
-                              f"Welcome to Duoweilai, {username}!", force=True)
+                              f"Welcome to Duoweilai! Your ID is {sys_id}.", force=True)
     auth.sign_in(uid)
-    return respond({"ok": True}, "/")
+    return respond({"ok": True, "id": sys_id}, f"/welcome?id={sys_id}")
 
 
 @api.route("/login", methods=["POST"])
 def login():
-    username, password = form_value("username"), form_value("password")
-    form = {"username": username}
-    if not username or not password:
-        return auth_error("login.html", "Enter your ID and password.", form)
-    uid = auth.authenticate(username, password)
+    identifier = form_value("username") or form_value("email")
+    password = form_value("password")
+    form = {"username": identifier}
+    if not identifier or not password:
+        return auth_error("login.html", "Enter your email or ID, and your password.", form)
+    uid = auth.authenticate(identifier, password)
     if not uid:
-        return auth_error("login.html", "ID or password is incorrect.", form)
+        return auth_error("login.html", "Email/ID or password is incorrect.", form)
     auth.sign_in(uid)
     return respond({"ok": True}, "/")
 

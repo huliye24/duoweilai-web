@@ -79,13 +79,25 @@ set DUOWEILAI_PORT=3000
 
 ## 账号系统
 
-**需要注册账号。** 点击右上角 **Sign up** 注册（用户名 3–20 位字母数字，邮箱可用来找回密码）。
+**游客直接参观，写内容才需要账号。** 打开首页就是世界内容（最近的种子），登录/注册入口在右上角，不挡在内容前面。
 
+注册只需要 **邮箱 + 密码**（点右上角 **Sign up**）。系统自动分配一个 **6 位数字的 Duoweilai ID**（从 100000 起，类似 QQ 号）：
+
+- 注册成功会跳到 /welcome 页面亮出你的 ID —— 提醒用户记住它
+- 登录可以用 **ID 或邮箱**，密码最短 6 位
 - 注册后自动登录，浏览器记住你 30 天
 - 忘记密码：登录页点 **Forgot password?**，未配置邮件服务时，重置链接会写到项目根目录的 `reset_link.log` 里，打开即可重置
-- 所有成员各自有账号，发布/贡献/评论都记在自己名下
+- 所有成员各自有账号，发布/贡献/评论都记在自己 ID 名下（/person/100010）
 
-> v0.4 时期的"免注册 explorer 模式"已在 v0.5 移除，现在和公网版本行为一致。
+**靓号（premium ID）：** 顺子（123456）、豹子（888888）、AABB/ABAB 尾号、尾数 000、四连数字这类"好号"**不会被自动分配**，专门留给运营手动发放：
+
+```powershell
+.venv\Scripts\python server.py adduser 888888 buyer@example.com 他们的密码
+```
+
+（生产服务器上：`cd /opt/duoweilai && sudo -u duoweilai venv/bin/python server.py adduser 888888 buyer@example.com 密码` —— 必须以 duoweilai 用户运行，否则 root 写出的 WAL 文件会让服务进程读不了库；服务运行中直接执行即可，SQLite 有 busy 超时保护。）
+
+> 早期 v0.5 测试账号用的是字母用户名，仍可照常登录（用户名或邮箱都行）。
 
 ---
 
@@ -187,11 +199,14 @@ E:\Duoweilai.com\
 **Q: 启动报错 ModuleNotFoundError: No module named 'flask'**
 > 忘了装依赖，或没用 venv。执行 `python -m venv .venv` + `.venv\Scripts\pip install -r requirements.txt`，然后用 `.venv\Scripts\python server.py` 启动。
 
-**Q: 注册时提示 "Username already taken"**
-> 该用户名已被占用。换一个用户名即可。
+**Q: 注册时提示 "That email is already registered"**
+> 该邮箱已有账号。换邮箱，或去登录页用邮箱/ID 登录、找回密码。
 
-**Q: 贡献/评论时提示 "Sign in required"**
-> 需要先登录。未登录用户不能发布内容。
+**Q: 忘记了自己的 Duoweilai ID**
+> 用注册邮箱登录即可（登录框填邮箱或 ID 都行）；登录后右上角和个人页 /person/ID 都能看到。
+
+**Q: 浏览时点发布/贡献提示 "Sign in to continue"**
+> 参观世界不需要账号，但发布内容需要。注册 30 秒搞定，只要邮箱和密码。
 
 **Q: 找回密码点提交后说 "Check your inbox"，但没收到邮件**
 > 本地没配 SMTP 时，重置链接写在项目根目录 `reset_link.log`，打开文件里的链接即可重置。

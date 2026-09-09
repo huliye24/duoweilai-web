@@ -54,6 +54,8 @@ else
     echo "   /etc/nginx/conf.d/duoweilai.conf 已存在，保留（含 certbot 修改）"
 fi
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+# Cloudflare 橙云代理时还原真实访客 IP（非 CF 来源的直连流量不受影响）
+bash deploy/cloudflare-realip.sh || echo "   Cloudflare realip 配置跳过（拉取网段失败？）"
 nginx -t && systemctl reload nginx
 
 echo "==> 7/8 防火墙放行 80/443"

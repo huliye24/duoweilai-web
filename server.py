@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Duoweilai — Web (v0.4)
+Duoweilai — Web (v0.5)
 Core loop: Publish a Future Seed → Permanent link → Explore → Grow together → Become a World
 Redesigned with v0.1 prototype UI language · English-first · Overseas market
+New in v0.5: Real user accounts (ID + password, no phone), email-based password reset
 """
 import sqlite3, json, os, uuid, random, re, hashlib, secrets
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -63,9 +64,13 @@ def init_db():
             created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+            password_hash TEXT NOT NULL, email TEXT UNIQUE,
+            created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            token TEXT UNIQUE NOT NULL, expires_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS comments (
             id INTEGER PRIMARY KEY AUTOINCREMENT, future_id TEXT NOT NULL,
             contribution_id INTEGER, parent_id INTEGER, author_id INTEGER NOT NULL,
@@ -83,6 +88,8 @@ def init_db():
         "ALTER TABLE futures ADD COLUMN creator_id INTEGER",
         "ALTER TABLE contributions ADD COLUMN author_id INTEGER",
         "ALTER TABLE futures ADD COLUMN category TEXT DEFAULT 'Unknown'",
+        "ALTER TABLE users ADD COLUMN email TEXT UNIQUE",
+        "ALTER TABLE users ADD COLUMN reset_token TEXT",
     ]:
         try: conn.execute(ddl)
         except sqlite3.OperationalError: pass
@@ -104,12 +111,12 @@ def verify_password(password, stored):
     except ValueError:
         return False
 
-def create_user(username, password):
+def create_user(username, password, email=None):
     conn = get_db()
     try:
         cur = conn.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
-            (username, hash_password(password), now_iso()))
+            "INSERT INTO users (username, password_hash, email, created_at) VALUES (?,?,?,?)",
+            (username, hash_password(password), email, now_iso()))
         conn.commit(); conn.close()
         return cur.lastrowid
     except sqlite3.IntegrityError:
@@ -148,15 +155,49 @@ def get_user_by_id(uid):
     row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     conn.close(); return row
 
-def ensure_default_user():
-    """Ensure the shared 'explorer' user exists. Returns its id.
-    Auto-login lets everyone skip registration during internal testing —
-    all activity is attributed to one account, "explorer"."""
+def get_user_by_username(username):
     conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE username=?", ("explorer",)).fetchone()
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    conn.close(); return row
+
+def get_user_by_email(email):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    conn.close(); return row
+
+def create_password_reset(user_id):
+    token = secrets.token_hex(24)
+    from datetime import timedelta
+    expires = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    conn = get_db()
+    conn.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
+    conn.execute("INSERT INTO password_resets (user_id, token, expires_at) VALUES (?,?,?)",
+                 (user_id, token, expires))
+    conn.commit(); conn.close()
+    return token
+
+def get_password_reset(token):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM password_resets WHERE token=? AND expires_at>?",
+                       (token, now_iso())).fetchone()
     if row:
-        conn.close(); return row["id"]
-    conn.close()
+        user = get_user_by_id(row["user_id"])
+    else:
+        user = None
+    conn.close(); return user
+
+def consume_password_reset(token, new_password):
+    user = get_password_reset(token)
+    if not user: return False
+    conn = get_db()
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), user["id"]))
+    conn.execute("DELETE FROM password_resets WHERE token=?", (token,))
+    conn.commit(); conn.close()
+    return True
+
+def ensure_default_user():
+    """Legacy: kept for back-compat with the v0.4 auto-login build.
+    No longer used — every visitor now has to register / sign in."""
     return create_user("explorer", "explore-duoweilai")
 
 # -------------------------------------------------
@@ -1078,13 +1119,16 @@ def page(user, unread, title, body, wide=False, extra_js=""):
 <body>{_header(user, unread)}{body}<div id="toast-root"></div><div id="confirm-root" class="confirm-overlay"><div class="confirm-box" id="confirm-box"></div></div><script>{_shared_js()}{extra_js}</script></body></html>"""
 
 def _header(user, unread=0):
-    """Top navigation. Auth is auto-enabled, so we just show the username
-    + notifications bell. No sign-in / sign-up buttons."""
-    right = (f'<a href="/notifications">Notifications'
-             + (f'<span style="background:#ff7d7d;color:#0a0a0b;font-size:10px;border-radius:999px;padding:1px 5px;margin-left:4px">{unread}</span>' if unread else '')
-             + '</a>')
+    """Top navigation. Shows username + bell when signed in; sign-in/sign-up
+    CTAs when not."""
     if user:
+        right = (f'<a href="/notifications">Notifications'
+                 + (f'<span style="background:#ff7d7d;color:#0a0a0b;font-size:10px;border-radius:999px;padding:1px 5px;margin-left:4px">{unread}</span>' if unread else '')
+                 + '</a>')
         right += f'<a href="/person/{quote(user["username"])}">{esc(user["username"])}</a>'
+        right += '<a href="/logout">Sign out</a>'
+    else:
+        right = '<a href="/login">Sign in</a><a href="/register" style="color:var(--fg)">Sign up</a>'
     return f"""
 <header id="site-header">
   <a href="/" class="logo">Duoweilai</a>
@@ -1122,27 +1166,42 @@ def render_home(user):
     else:
         feed_html = '<div class="empty">No futures yet — be the first to plant one.</div>'
 
-    # Publish form — auth is auto-enabled, so the publish box is always shown.
+    # Publish form — only for signed-in users. Logged-out visitors see a
+    # plain CTA pointing them to register / sign in.
     cats = ["Unknown", "Life", "Cities", "Education", "Culture", "Relationships", "Work", "Civilization", "Technology"]
     cat_opts = "".join(f'<option value="{c}">{c}</option>' for c in cats)
-    publish = f"""
-    <div class="hero fade-in">
-      <h1>What future do you imagine?</h1>
-      <p>Write down a future. It becomes a permanent seed.</p>
-    </div>
-    <form method="post" action="/api/future">
-      <div class="input-wrapper">
-        <textarea name="title" id="futureInput" placeholder="Describe a future..."
-                  rows="4"></textarea>
-        <div class="form-footer">
-          <select name="category" style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--fg);padding:6px 10px;font-size:13px;font-family:inherit;cursor:pointer">
-            {cat_opts}
-          </select>
-          <span class="hint">⌘ Enter to publish</span>
-          <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
+    if user:
+        publish = f"""
+        <div class="hero fade-in">
+          <h1>What future do you imagine?</h1>
+          <p>Write down a future. It becomes a permanent seed.</p>
         </div>
-      </div>
-    </form>"""
+        <form method="post" action="/api/future">
+          <div class="input-wrapper">
+            <textarea name="title" id="futureInput" placeholder="Describe a future..."
+                      rows="4"></textarea>
+            <div class="form-footer">
+              <select name="category" style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--fg);padding:6px 10px;font-size:13px;font-family:inherit;cursor:pointer">
+                {cat_opts}
+              </select>
+              <span class="hint">⌘ Enter to publish</span>
+              <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
+            </div>
+          </div>
+        </form>"""
+    else:
+        publish = f"""
+        <div class="hero fade-in">
+          <h1>What future do you imagine?</h1>
+          <p>Pick an ID. Set a password. Plant seeds that outlive you.</p>
+        </div>
+        <div style="display:flex;gap:12px;justify-content:center;margin-bottom:32px">
+          <a href="/register" class="btn-primary" style="text-decoration:none">Plant your first seed</a>
+          <a href="/login" class="btn-secondary" style="text-decoration:none">Sign in</a>
+        </div>
+        <div style="text-align:center;color:var(--subtle);font-size:13.5px;max-width:480px;margin:0 auto">
+          No phone number needed. Just an email so we can help you recover your account.
+        </div>"""
 
     # Recent seeds for browsing
     futures = list_futures(6)
@@ -1249,7 +1308,7 @@ def render_seed(user, short):
         del_btn = (f'<button class="icon-btn danger" data-delete="/api/comment/{cm["id"]}/delete" data-label="this comment" style="margin-left:4px">✕</button>'
                    if can_del else '')
         reply_btn = (f'<button class="icon-btn" data-reply-toggle style="margin-left:4px">↩ reply</button>'
-                     if depth == 0 else '')
+                     if depth == 0 and user else '')
         html = (f'<div class="comment" data-row>'
                 f'<div style="font-size:13px;font-weight:500">{esc(cm["username"])}{del_btn}{reply_btn}</div>'
                 f'<div style="font-size:12px;color:var(--subtle);margin-bottom:6px">{rel_time(cm["created_at"])}</div>'
@@ -1283,33 +1342,50 @@ def render_seed(user, short):
     else:
         recent_branches = '<div class="empty" style="margin-top:16px">No branches yet.</div>'
 
-    # Comment form — always available (auto-login)
-    comment_form = f"""
-    <div class="comment-form">
-      <form method="post" action="/api/comment">
-        <input type="hidden" name="future_id" value="{short}">
-        <textarea name="body" placeholder="Share a thought on this future..." rows="3"></textarea>
-        <div style="margin-top:10px">
-          <button type="submit" class="btn-secondary">Post comment</button>
-        </div>
-      </form>
-    </div>"""
+    # Comment form — only for signed-in users
+    if user:
+        comment_form = f"""
+        <div class="comment-form">
+          <form method="post" action="/api/comment">
+            <input type="hidden" name="future_id" value="{short}">
+            <textarea name="body" placeholder="Share a thought on this future..." rows="3"></textarea>
+            <div style="margin-top:10px">
+              <button type="submit" class="btn-secondary">Post comment</button>
+            </div>
+          </form>
+        </div>"""
+    else:
+        comment_form = f"""
+        <div style="text-align:center;padding:20px;border:1px dashed #3f3f46;border-radius:12px;margin-top:24px">
+          <p style="color:var(--muted);margin-bottom:12px;font-size:14px">Sign in to join the discussion.</p>
+          <a href="/login" class="btn-secondary" style="text-decoration:none;display:inline-block">Sign in</a>
+        </div>"""
 
-    # Contribute form — always available (auto-login)
-    type_opts = "".join(f'<option value="{k}">{v}</option>' for k, v in TYPE_EN.items())
-    contribute_form = f"""
-    <div class="cta-box" style="margin-top:32px">
-      <p>Help this future grow. Add something to it.</p>
-      <form method="post" action="/api/contribute">
-        <input type="hidden" name="future_id" value="{short}">
-        <select name="type" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:12px">
-          {type_opts}
-        </select>
-        <input name="title" placeholder="Title" required style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px">
-        <textarea name="body" placeholder="Description (optional)" rows="3" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px"></textarea>
-        <button type="submit" class="btn-primary">Contribute</button>
-      </form>
-    </div>"""
+    # Contribute form — only for signed-in users (auto-login no longer bypasses)
+    if user:
+        type_opts = "".join(f'<option value="{k}">{v}</option>' for k, v in TYPE_EN.items())
+        contribute_form = f"""
+        <div class="cta-box" style="margin-top:32px">
+          <p>Help this future grow. Add something to it.</p>
+          <form method="post" action="/api/contribute">
+            <input type="hidden" name="future_id" value="{short}">
+            <select name="type" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:12px">
+              {type_opts}
+            </select>
+            <input name="title" placeholder="Title" required style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px">
+            <textarea name="body" placeholder="Description (optional)" rows="3" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px"></textarea>
+            <button type="submit" class="btn-primary">Contribute</button>
+          </form>
+        </div>"""
+    else:
+        contribute_form = f"""
+        <div class="cta-box" style="margin-top:32px">
+          <p>Sign in to add People, Places, Stories, Rules, Objects, or Branches to this future.</p>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+            <a href="/register" class="btn-primary" style="text-decoration:none">Create account</a>
+            <a href="/login" class="btn-secondary" style="text-decoration:none">Sign in</a>
+          </div>
+        </div>"""
 
     world_cta = ""
     if f["is_world"]:
@@ -1550,9 +1626,170 @@ def render_notifications(user):
     return page(user, 0, "Notifications",
                 f'<div class="container"><h1 style="font-size:20px;font-weight:500;margin-bottom:24px">Notifications</h1><div>{items}</div></div>')
 
-# Auth pages are disabled in this build (auto-login). render_login /
-# render_register were removed; /login and /register redirect to "/" instead.
+# Auth pages — three simple forms: register, sign in, recover account.
+def render_register(err=None, form=None):
+    form = form or {}
+    return page(None, 0, "Register", f"""
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Join Duoweilai</h1>
+    <p style="color:var(--muted);font-size:14px">Pick an ID, set a password. One email — that's all.</p>
+  </div>
+  {('<div class="alert err" style="margin-bottom:16px">' + esc(err) + '</div>') if err else ''}
+  <form method="post" action="/api/register" autocomplete="off">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:14px">Your ID</label>
+    <input name="username" value="{esc(form.get('username',''))}" required minlength="3" maxlength="20"
+           pattern="[A-Za-z0-9_]+" title="3-20 letters, digits, underscore"
+           placeholder="e.g. alice, futuremaker"
+           class="text-input" style="font-size:15px">
+    <div style="font-size:12px;color:var(--subtle);margin-top:4px">3–20 letters / digits / underscore. This is how people find you.</div>
 
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Email <span style="color:#52525b">(for account recovery only)</span></label>
+    <input name="email" type="email" value="{esc(form.get('email',''))}" required
+           placeholder="you@example.com" class="text-input" style="font-size:15px">
+
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Password</label>
+    <input name="password" type="password" required minlength="6"
+           placeholder="At least 6 characters" class="text-input" style="font-size:15px">
+
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:24px;padding:13px;font-size:15px">Create my account</button>
+  </form>
+  <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--muted)">
+    Already have an account? <a href="/login" style="color:var(--fg);text-decoration:none;border-bottom:1px solid #3f3f46">Sign in</a>
+  </div>
+</div>""")
+
+def render_login(err=None, form=None):
+    form = form or {}
+    return page(None, 0, "Sign in", f"""
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Welcome back</h1>
+    <p style="color:var(--muted);font-size:14px">Sign in to plant seeds and grow worlds.</p>
+  </div>
+  {('<div class="alert err" style="margin-bottom:16px">' + esc(err) + '</div>') if err else ''}
+  <form method="post" action="/api/login" autocomplete="off">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px">Your ID</label>
+    <input name="username" value="{esc(form.get('username',''))}" required
+           placeholder="Your ID" class="text-input" style="font-size:15px" autofocus>
+
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Password</label>
+    <input name="password" type="password" required placeholder="Your password"
+           class="text-input" style="font-size:15px">
+
+    <div style="text-align:right;margin-top:8px">
+      <a href="/forgot" style="font-size:12.5px;color:var(--subtle);text-decoration:none">Forgot your password?</a>
+    </div>
+
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:20px;padding:13px;font-size:15px">Sign in</button>
+  </form>
+  <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--muted)">
+    No account yet? <a href="/register" style="color:var(--fg);text-decoration:none;border-bottom:1px solid #3f3f46">Create one</a>
+  </div>
+</div>""")
+
+def render_forgot(sent_to=None, err=None):
+    if sent_to:
+        body = f"""
+<div class="container" style="max-width:420px;text-align:center">
+  <h1 style="font-size:22px;font-weight:500;margin-bottom:12px">Check your inbox</h1>
+  <p style="color:var(--muted);font-size:14.5px;line-height:1.7">If an account exists for <b>{esc(sent_to)}</b>, a reset link has been sent.<br>The link expires in 2 hours.</p>
+  <div style="margin-top:24px"><a href="/login" class="btn-secondary" style="text-decoration:none;display:inline-block">Back to sign in</a></div>
+</div>"""
+    else:
+        body = f"""
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Forgot your password?</h1>
+    <p style="color:var(--muted);font-size:14px">Enter the email you used when you signed up.</p>
+  </div>
+  {('<div class="alert err" style="margin-bottom:16px">' + esc(err) + '</div>') if err else ''}
+  <form method="post" action="/api/forgot" autocomplete="off">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px">Email</label>
+    <input name="email" type="email" required placeholder="you@example.com"
+           class="text-input" style="font-size:15px" autofocus>
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:20px;padding:13px;font-size:15px">Send reset link</button>
+  </form>
+  <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--muted)">
+    <a href="/login" style="color:var(--fg);text-decoration:none;border-bottom:1px solid #3f3f46">Back to sign in</a>
+  </div>
+</div>"""
+    return page(None, 0, "Forgot password", body)
+
+def render_reset(token, err=None):
+    return page(None, 0, "Reset password", f"""
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Set a new password</h1>
+    <p style="color:var(--muted);font-size:14px">Choose something you'll remember.</p>
+  </div>
+  {('<div class="alert err" style="margin-bottom:16px">' + esc(err) + '</div>') if err else ''}
+  <form method="post" action="/api/reset" autocomplete="off">
+    <input type="hidden" name="token" value="{esc(token)}">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px">New password</label>
+    <input name="password" type="password" required minlength="6" placeholder="At least 6 characters"
+           class="text-input" style="font-size:15px" autofocus>
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:20px;padding:13px;font-size:15px">Save new password</button>
+  </form>
+</div>""")
+
+def _reset_success_page():
+    return page(None, 0, "Password updated", """
+<div class="container" style="max-width:420px;text-align:center">
+  <h1 style="font-size:22px;font-weight:500;margin-bottom:12px">Password updated</h1>
+  <p style="color:var(--muted);font-size:14.5px">You can now sign in with your new password.</p>
+  <div style="margin-top:24px"><a href="/login" class="btn-primary" style="text-decoration:none;display:inline-block">Go to sign in</a></div>
+</div>""")
+
+def _need_login_page(next_path="/"):
+    return page(None, 0, "Sign in required", f"""
+<div class="container" style="max-width:420px;text-align:center">
+  <h1 style="font-size:22px;font-weight:500;margin-bottom:12px">Sign in to continue</h1>
+  <p style="color:var(--muted);font-size:14.5px">Planting seeds and growing worlds needs an account. It's free and takes 30 seconds.</p>
+  <div style="margin-top:24px;display:flex;gap:12px;justify-content:center">
+    <a href="/register" class="btn-primary" style="text-decoration:none">Create account</a>
+    <a href="/login" class="btn-secondary" style="text-decoration:none">Sign in</a>
+  </div>
+</div>""")
+
+def log_password_reset(user, reset_url):
+    """Print the reset link so an operator can forward it manually.
+    Wired up via env vars (DUOWEILAI_SMTP_*) for real sending when ready."""
+    host = os.environ.get("DUOWEILAI_SMTP_HOST", "")
+    if host:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            msg = MIMEText(
+                f"Hello {user['username']},\n\n"
+                f"Someone (hopefully you) asked to reset the password for your Duoweilai account.\n\n"
+                f"Reset link (valid for 2 hours): {reset_url}\n\n"
+                f"If you didn't ask for this, you can safely ignore this email.\n\n"
+                f"— Duoweilai")
+            msg["Subject"] = "Reset your Duoweilai password"
+            msg["From"] = os.environ.get("DUOWEILAI_SMTP_FROM", "no-reply@duoweilai.com")
+            msg["To"] = user["email"]
+            port = int(os.environ.get("DUOWEILAI_SMTP_PORT", "587"))
+            user_s = os.environ.get("DUOWEILAI_SMTP_USER", "")
+            pw = os.environ.get("DUOWEILAI_SMTP_PASSWORD", "")
+            with smtplib.SMTP(host, port, timeout=10) as s:
+                s.starttls()
+                if user_s: s.login(user_s, pw)
+                s.send_message(msg)
+            return True
+        except Exception as e:
+            print(f"  [reset-mail] SMTP failed for {user['email']}: {e}")
+    # Always log to console + file so the reset URL is recoverable.
+    line = (f"\n  [reset-mail] To: {user['email']} ({user['username']})\n"
+            f"  [reset-mail] Link: {reset_url}\n")
+    print(line, flush=True)
+    try:
+        with open("reset_link.log", "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception: pass
+    return False
+
+# Old redirect stub kept for reference — no longer used now that real auth exists.
 def _redirect(loc):
     return (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
             f'<meta http-equiv="refresh" content="0;url={loc}"></head><body>'
@@ -1572,20 +1809,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
 
     def current_user(self):
-        """Auto-login: every visitor is treated as the shared 'explorer' user,
-        so registration and sign-in are bypassed entirely. Sessions are still
-        issued and read for future-proofing, but never required."""
+        """Return the authenticated user, or None if not signed in.
+        Real account system: username + password, no auto-login."""
         cookie = self.headers.get("Cookie", "")
         sc = SimpleCookie(); sc.load(cookie)
         tok = sc.get("duoweilai_session")
-        if tok:
-            user = get_user_by_session(tok.value)
-            if user: return user
-        # Auto-create / re-fetch the default user and set a cookie.
-        uid = ensure_default_user()
-        token = create_session(uid)
-        self.set_session_cookie(token)
-        return get_user_by_id(uid)
+        if not tok: return None
+        user = get_user_by_session(tok.value)
+        return user
 
     def set_session_cookie(self, token):
         sc = SimpleCookie()
@@ -1643,13 +1874,27 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":        return self.send_html(render_home(user))
         if path == "/explore": return self.send_html(render_explore(user))
-        # Auth routes are disabled — every visitor is auto-logged in.
-        if path == "/login" or path == "/register":
-            self.send_redirect("/"); return
-        # Sign-out is no longer meaningful, but redirect instead of 404.
+        if path == "/login":
+            if user: return self.send_redirect("/")
+            return self.send_html(render_login())
+        if path == "/register":
+            if user: return self.send_redirect("/")
+            return self.send_html(render_register())
+        if path == "/forgot":
+            return self.send_html(render_forgot())
+        m = re.fullmatch(r"/reset/([A-Fa-f0-9]+)", path)
+        if m:
+            return self.send_html(render_reset(m.group(1)))
         if path == "/logout":
-            self.send_redirect("/"); return
-        if path == "/notifications": return self.send_html(render_notifications(user))
+            cookie = self.headers.get("Cookie", "")
+            sc = SimpleCookie(); sc.load(cookie)
+            tok = sc.get("duoweilai_session")
+            if tok: delete_session(tok.value)
+            self.clear_session_cookie()
+            return self.send_redirect("/")
+        if path == "/notifications":
+            if not user: return self.send_redirect("/login")
+            return self.send_html(render_notifications(user))
         if path.startswith("/f/"):   return self.send_html(render_seed(user, path[3:]))
         if path.startswith("/world/"):return self.send_html(render_world(user, path[7:]))
         if path.startswith("/person/"):return self.send_html(render_person(user, unquote(path[8:])))
@@ -1662,17 +1907,94 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         init_db()
-        user = self.current_user()  # always non-None thanks to auto-login
+        user = self.current_user()
         path = urlparse(self.path).path
         try: data = self.read_body()
         except ValueError: return self.send_json({"ok": False, "error": "Body too large"}, 413)
         f = lambda k: (data.get(k, [""])[0]).strip()
 
-        # Auth endpoints are disabled in this build — every visitor is auto-
-        # logged in as 'explorer'. Keep the routes as redirects so old links
-        # don't 404.
-        if path == "/api/register" or path == "/api/login":
-            self.send_redirect("/"); return
+        # ----- Auth endpoints -----
+        import re as _re
+        def valid_username(u):
+            return bool(u) and 3 <= len(u) <= 20 and _re.fullmatch(r"[A-Za-z0-9_]+", u)
+        def valid_email(e):
+            return bool(e) and '@' in e and '.' in e.split('@')[-1] and len(e) <= 254
+        def re_render_login(err, form):
+            self.send_html(render_login(err, form))
+        def re_render_register(err, form):
+            self.send_html(render_register(err, form))
+
+        if path == "/api/register":
+            username = f("username"); email = f("email"); password = f("password")
+            form = {"username": username, "email": email}
+            if not valid_username(username):
+                return self.send_html(render_register("ID must be 3–20 letters, digits, or underscore.", form))
+            if not valid_email(email):
+                return self.send_html(render_register("Please enter a valid email.", form))
+            if len(password) < 6:
+                return self.send_html(render_register("Password must be at least 6 characters.", form))
+            # Check uniqueness explicitly for cleaner error messages
+            if get_user_by_username(username):
+                return self.send_html(render_register("That ID is already taken — pick another.", form))
+            if get_user_by_email(email):
+                return self.send_html(render_register("That email is already registered. Try signing in or using a different email.", form))
+            uid = create_user(username, password, email)
+            if not uid:
+                return self.send_html(render_register("Could not create account — please try a different ID or email.", form))
+            # Welcome notification
+            add_notification(uid, uid, "welcome", None, f"Welcome to Duoweilai, {username}!")
+            # Log them in
+            token = create_session(uid)
+            self.set_session_cookie(token)
+            return self.send_redirect("/")
+
+        if path == "/api/login":
+            username = f("username"); password = f("password")
+            form = {"username": username}
+            if not username or not password:
+                return self.send_html(render_login("Enter your ID and password.", form))
+            uid = authenticate(username, password)
+            if not uid:
+                return self.send_html(render_login("ID or password is incorrect.", form))
+            token = create_session(uid)
+            self.set_session_cookie(token)
+            return self.send_redirect("/")
+
+        if path == "/api/logout":
+            cookie = self.headers.get("Cookie", "")
+            sc = SimpleCookie(); sc.load(cookie)
+            tok = sc.get("duoweilai_session")
+            if tok: delete_session(tok.value)
+            self.clear_session_cookie()
+            return self.send_redirect("/")
+
+        if path == "/api/forgot":
+            email = f("email")
+            if not email:
+                return self.send_html(render_forgot(err="Please enter your email."))
+            target = get_user_by_email(email)
+            if target:
+                token = create_password_reset(target["id"])
+                reset_url = f"/reset/{token}"
+                log_password_reset(target, reset_url)
+            # Always show success to avoid revealing whether an account exists
+            return self.send_html(render_forgot(sent_to=email))
+
+        m = re.fullmatch(r"/api/reset/([A-Fa-f0-9]+)", path)
+        if not m and path == "/api/reset":
+            m = re.match(r"/api/reset/([A-Fa-f0-9]+)", f("token"))
+        if m:
+            token = m.group(1); password = f("password")
+            if len(password) < 6:
+                return self.send_html(render_reset(token, err="Password must be at least 6 characters."))
+            if not get_password_reset(token):
+                return self.send_html(render_reset(token, err="This reset link is invalid or has expired."))
+            consume_password_reset(token, password)
+            return self.send_html(_reset_success_page())
+
+        # All endpoints below require login
+        if not user:
+            return self.send_html(_need_login_page())
 
         if path == "/api/future":
             title = f("title")
@@ -1708,7 +2030,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "commented on your future")
             self.send_redirect(f"/f/{future_id}"); return
 
-        # ----- Delete endpoints -----
+        # ----- Delete endpoints (login required, checked above) -----
         # POST /api/future/<short>/delete — owner only, removes the seed and
         # its contributions/comments.
         m = re.fullmatch(r"/api/future/([A-Za-z0-9_-]+)/delete", path)

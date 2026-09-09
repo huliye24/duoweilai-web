@@ -11,4 +11,4 @@ mypy>=1.11
 coverage>=7.5
 
 # 安全审计（CI 用）
-pip-audit>=2.7
+pip-audit>=2.10.1

@@ -345,20 +345,23 @@ def get_feed(limit=30):
 # Minimal dark · Inter font · Monochrome · Clean
 # -------------------------------------------------
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap');
 
 :root {
   --bg: #0a0a0b; --fg: #f4f4f5; --muted: #a1a1aa; --subtle: #71717a;
-  --border: #27272a; --card: #111113; --hover: #18181b;
+  --border: #27272a; --card: #111113; --card-bg: #111113; --hover: #18181b;
   --input-bg: #18181b;
 }
 
-*, .clear { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { background: var(--bg); scroll-behavior: smooth; }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
   background: var(--bg); color: var(--fg);
   min-height: 100vh; line-height: 1.6; font-size: 15px; -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Header */
@@ -383,14 +386,14 @@ header.scrolled { border-bottom-color: var(--border); }
 .header-right a:hover, .header-right a.active { color: var(--fg); }
 
 /* Layout containers */
-.container { max-width: 720px; margin: 0 auto; padding: 48px 24px 120px; }
+.container { max-width: 720px; margin: 0 auto; padding: 48px 24px 100px; }
 .container-wide { max-width: 960px; margin: 0 auto; padding: 48px 24px 100px; }
 
 /* Hero */
-.hero { text-align: center; margin-bottom: 40px; }
+.hero { text-align: center; margin-bottom: 48px; }
 .hero h1 {
-  font-size: clamp(26px, 5vw, 34px); font-weight: 400;
-  letter-spacing: -0.02em; margin-bottom: 10px;
+  font-size: clamp(28px, 5vw, 36px); font-weight: 400;
+  letter-spacing: -0.02em; margin-bottom: 12px;
 }
 .hero p { font-size: 16px; color: var(--muted); font-weight: 300; }
 
@@ -407,14 +410,51 @@ header.scrolled { border-bottom-color: var(--border); }
 textarea {
   width: 100%; background: transparent; border: none; outline: none;
   color: var(--fg); font-size: 17px; font-family: inherit;
-  resize: none; min-height: 110px; line-height: 1.6;
+  resize: none; min-height: 120px; line-height: 1.6;
 }
 textarea::placeholder { color: #52525b; }
 .form-footer {
   display: flex; justify-content: space-between; align-items: center;
-  margin-top: 12px; padding: 0 4px;
+  gap: 12px; margin-top: 12px; padding: 0 4px;
 }
-.hint { font-size: 13px; color: #52525b; }
+.hint { font-size: 13px; color: #52525b; flex: 1; min-width: 0; }
+
+/* Minimal ghost select (category picker, contribute type fallback) */
+.ghost-select {
+  background: transparent; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--subtle); padding: 6px 12px; font-size: 12px;
+  font-family: inherit; cursor: pointer; outline: none; transition: all 0.2s;
+}
+.ghost-select:hover, .ghost-select:focus { border-color: #3f3f46; color: var(--fg); }
+.ghost-select option { background: var(--card); color: var(--fg); }
+
+/* Text inputs (contribute form etc.) */
+.text-input {
+  width: 100%; background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: 12px; color: var(--fg); padding: 12px 14px;
+  font-size: 14px; font-family: inherit; outline: none; transition: border-color 0.2s;
+}
+.text-input:focus { border-color: #3f3f46; }
+.text-input::placeholder { color: #52525b; }
+
+/* Success state (after publish) — demo home */
+.result { display: none; text-align: center; animation: fadeIn 0.4s ease; }
+.result.show { display: block; }
+.result .label { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.result .url {
+  font-size: 18px; font-weight: 500; letter-spacing: -0.01em;
+  margin-bottom: 24px; word-break: break-all;
+}
+.result .url a {
+  color: var(--fg); text-decoration: none; border-bottom: 1px solid #3f3f46;
+}
+.result .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; align-items: center; }
+.result .actions button, .result .actions a {
+  background: transparent; border: 1px solid var(--border); color: var(--fg);
+  border-radius: 999px; padding: 9px 18px; font-size: 13px;
+  cursor: pointer; font-family: inherit; transition: background 0.2s; text-decoration: none;
+}
+.result .actions button:hover, .result .actions a:hover { background: rgba(255,255,255,0.05); }
 
 /* Buttons */
 .btn-primary {
@@ -435,26 +475,24 @@ textarea::placeholder { color: #52525b; }
 .btn-secondary:hover { border-color: #3f3f46; background: rgba(255,255,255,0.04); }
 .btn-secondary:active { transform: scale(0.98); }
 
-/* Seed cards */
-.seeds-section { margin-top: 80px; }
+/* Seed cards — demo home "Growing Futures" (transparent, border-only) */
+.seeds-section { margin-top: 100px; width: 100%; }
 .section-label {
   font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: #52525b; margin-bottom: 16px; text-align: center;
+  color: #52525b; margin-bottom: 20px; text-align: center;
 }
 .seeds-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;
 }
 .seed-card {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 12px; padding: 16px 18px;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px 20px;
   text-decoration: none; color: inherit;
-  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  transition: border-color 0.2s, background 0.2s;
   display: block;
 }
-.seed-card:hover {
-  border-color: #3f3f46; background: var(--hover); transform: translateY(-1px);
-}
-.seed-card .title { font-size: 14.5px; font-weight: 400; line-height: 1.45; margin-bottom: 8px; }
+.seed-card:hover { border-color: #3f3f46; background: rgba(255,255,255,0.02); }
+.seed-card .title { font-size: 15px; font-weight: 400; line-height: 1.4; margin-bottom: 6px; }
 .seed-card .meta { font-size: 12px; color: var(--subtle); }
 
 /* Seed detail page */
@@ -481,6 +519,13 @@ textarea::placeholder { color: #52525b; }
 
 /* Explore grid */
 .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; }
+
+/* Feed (live activity stream) */
+.feed { display: flex; flex-direction: column; gap: 2px; }
+.feed-item { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+.feed-item:last-child { border-bottom: none; }
+.feed-item .ic { flex: 0 0 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; background: #27272a; border: 1px solid var(--border); color: var(--muted); }
+
 .cat-btn {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 999px; padding: 7px 16px; font-size: 13px;
@@ -491,7 +536,13 @@ textarea::placeholder { color: #52525b; }
   background: rgba(255,255,255,0.03);
 }
 
-/* Explore cards — question cards */
+/* Explore page — demo03 */
+.page-title { font-size: 28px; font-weight: 400; letter-spacing: -0.02em; margin-bottom: 8px; }
+.page-desc { font-size: 15px; color: var(--muted); margin-bottom: 48px; }
+.questions-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px; margin-bottom: 64px;
+}
 .question-card {
   background: var(--card); border: 1px solid var(--border);
   border-radius: 14px; padding: 22px 20px;
@@ -502,19 +553,54 @@ textarea::placeholder { color: #52525b; }
 .question-card:hover {
   border-color: #3f3f46; background: var(--hover); transform: translateY(-1px);
 }
-.question-card .q { font-size: 15.5px; font-weight: 400; line-height: 1.45; flex: 1; }
+.question-card .q { font-size: 16px; font-weight: 400; line-height: 1.45; flex: 1; }
 .question-card .meta { font-size: 12px; color: var(--subtle); display: flex; justify-content: space-between; }
 
 /* Seed rows (list view) */
 .seed-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 15px 18px; border: 1px solid var(--border);
+  padding: 16px 18px; border: 1px solid var(--border);
   border-radius: 12px; text-decoration: none; color: inherit;
   transition: all 0.2s; gap: 16px;
 }
 .seed-row:hover { border-color: #3f3f46; background: rgba(255,255,255,0.02); }
 .seed-row .title { font-size: 15px; flex: 1; }
 .seed-row .info { font-size: 12px; color: var(--subtle); white-space: nowrap; }
+
+/* "Explore this Future" tile grid — demo seed page */
+.explore-label {
+  font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--subtle); margin-bottom: 20px;
+}
+.explore-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 560px) { .explore-grid { grid-template-columns: repeat(3, 1fr); } }
+.explore-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 22px 20px;
+  text-decoration: none; color: inherit; transition: all 0.2s;
+  display: flex; flex-direction: column; gap: 6px; min-height: 110px;
+}
+.explore-card:hover { border-color: #3f3f46; background: var(--hover); transform: translateY(-1px); }
+.explore-card .icon { font-size: 18px; margin-bottom: 4px; opacity: 0.7; }
+.explore-card .name { font-size: 15px; font-weight: 500; }
+.explore-card .count { font-size: 12px; color: var(--subtle); margin-top: auto; }
+
+/* Branches preview — demo seed page */
+.branches-section { margin-top: 64px; }
+.section-header {
+  display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px;
+}
+.section-link { font-size: 13px; color: var(--muted); text-decoration: none; }
+.section-link:hover { color: var(--fg); }
+.branch-list { display: flex; flex-direction: column; gap: 8px; }
+.branch-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px;
+  text-decoration: none; color: inherit; transition: all 0.2s; gap: 12px;
+}
+.branch-item:hover { border-color: #3f3f46; background: rgba(255,255,255,0.02); }
+.branch-title { font-size: 14px; }
+.branch-meta { font-size: 12px; color: var(--subtle); white-space: nowrap; }
 
 /* World page */
 .layout { display: flex; max-width: 1100px; margin: 0 auto; min-height: calc(100vh - 53px); }
@@ -574,6 +660,7 @@ textarea::placeholder { color: #52525b; }
 .card:hover { border-color: #3f3f46; background: var(--hover); }
 .card .name { font-size: 14px; font-weight: 500; }
 .card .desc { font-size: 12.5px; color: var(--subtle); line-height: 1.4; }
+.card .meta { font-size: 11.5px; color: #52525b; margin-top: auto; padding-top: 6px; }
 
 /* Timeline */
 .timeline { position: relative; padding-left: 20px; }
@@ -648,34 +735,6 @@ textarea::placeholder { color: #52525b; }
 .notif .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg); margin-top: 7px; flex: 0 0 8px; }
 .notif .dot.read { background: transparent; }
 
-/* Feed */
-.feed { display: flex; flex-direction: column; gap: 2px; }
-.feed-item {
-  display: flex; gap: 12px; padding: 14px 0;
-  border-bottom: 1px solid var(--border); align-items: flex-start;
-}
-.feed-item:last-child { border-bottom: none; }
-.feed-item .ic {
-  flex: 0 0 32px; height: 32px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; background: #27272a; border: 1px solid var(--border);
-  color: var(--muted);
-}
-
-/* Auth pages */
-.auth-wrap { max-width: 420px; margin: 60px auto; padding: 0 24px; }
-.auth-title { font-size: 22px; font-weight: 400; margin-bottom: 6px; letter-spacing: -0.02em; }
-.auth-sub { font-size: 15px; color: var(--muted); margin-bottom: 32px; }
-.auth-form { display: flex; flex-direction: column; gap: 0; }
-.auth-form label { font-size: 13px; color: var(--subtle); display: block; margin-top: 16px; margin-bottom: 6px; }
-.auth-form input {
-  width: 100%; background: var(--input-bg); border: 1px solid var(--border);
-  border-radius: 12px; color: var(--fg); padding: 12px 14px;
-  font-size: 15px; font-family: inherit; outline: none; transition: border-color 0.2s;
-}
-.auth-form input:focus { border-color: #3f3f46; }
-.auth-form input::placeholder { color: #52525b; }
-
 /* Comment */
 .comment {
   border-left: 2px solid var(--border); padding: 10px 14px;
@@ -735,11 +794,8 @@ textarea::placeholder { color: #52525b; }
 .contrib-meta { font-size: 12px; color: var(--subtle); }
 .contrib-body { font-size: 14px; color: var(--muted); margin-top: 8px; line-height: 1.6; white-space: pre-wrap; }
 
-/* Footer */
-footer {
-  text-align: center; padding: 32px; font-size: 12px; color: #3f3f46;
-  border-top: 1px solid var(--border); margin-top: 48px;
-}
+/* Footer — demo: quiet, centered, no heavy border */
+footer { text-align: center; padding: 24px 40px; font-size: 12px; color: #3f3f46; }
 
 /* Empty state */
 .empty { text-align: center; padding: 48px 20px; color: var(--subtle); font-size: 14px; }
@@ -764,13 +820,14 @@ footer {
 @media (max-width: 640px) {
   header { padding: 14px 16px; }
   .container, .container-wide { padding: 32px 16px 80px; }
+  .hero { margin-bottom: 36px; }
+  .seeds-section { margin-top: 72px; }
   .seed-footer { flex-direction: column; align-items: flex-start; }
   .profile { flex-direction: column; align-items: center; text-align: center; }
   .stats { justify-content: center; }
   .item { flex-direction: column; align-items: flex-start; gap: 6px; }
   .seed-row { flex-direction: column; align-items: flex-start; gap: 6px; }
   .contribute-types { grid-template-columns: repeat(2, 1fr); }
-  .auth-wrap { margin: 40px auto; }
 }
 
 /* Fade in animation */
@@ -1115,23 +1172,37 @@ def render_explore(user):
         for c in cats)
 
     if rows:
-        rows_html = ""
+        # Question cards grid (Future Questions)
+        qcards = ""
+        for f in rows:
+            row_cat = (f["category"] if "category" in f.keys() else None) or "Unknown"
+            qcards += (f'<a href="/f/{f["short_id"]}" class="question-card" data-row-cat="{row_cat}">'
+                      f'<div class="q">{esc(f["title"])}</div>'
+                      f'<div class="meta"><span>{row_cat}</span><span>{f["branches"]} seeds</span></div></a>')
+        # Recently Growing list rows
+        recent_rows = ""
         for f in rows:
             world_tag = ' <span class="world-indicator">World</span>' if f["is_world"] else ""
             row_cat = (f["category"] if "category" in f.keys() else None) or "Unknown"
-            rows_html += (f'<a href="/f/{f["short_id"]}" class="seed-row" data-row-cat="{row_cat}">'
-                         f'<span class="title">{esc(f["title"])}</span>'
-                         f'<span class="info">{f["branches"]} branches · {rel_time(f["created_at"])}{world_tag}</span></a>')
+            recent_rows += (f'<a href="/f/{f["short_id"]}" class="seed-row" data-row-cat="{row_cat}">'
+                           f'<span class="title">{esc(f["title"])}</span>'
+                           f'<span class="info">{f["branches"]} branches · {rel_time(f["created_at"])}{world_tag}</span></a>')
     else:
-        rows_html = '<div class="empty" id="explore-empty">No futures published yet.</div>'
+        qcards = '<div class="empty" id="explore-empty">No futures published yet.</div>'
+        recent_rows = ""
 
     return page(user, 0, "Explore",
                f"""
 <div class="container-wide">
-  <h1 style="font-size:26px;font-weight:400;letter-spacing:-0.02em;margin-bottom:8px">Explore Futures</h1>
-  <p style="font-size:15px;color:var(--muted);margin-bottom:40px">Browse the futures growing right now.</p>
+  <h1 class="page-title">Explore Futures</h1>
+  <p class="page-desc">不是按内容类型，而是按我们共同关心的未来问题。</p>
   <div class="categories">{cat_btns}</div>
-  <div class="feed">{rows_html}</div>
+
+  <div class="section-label">Future Questions</div>
+  <div class="questions-grid">{qcards}</div>
+
+  <div class="section-label">Recently Growing</div>
+  <div class="seed-list">{recent_rows}</div>
 </div>""")
 
 def render_seed(user, short):
@@ -1195,6 +1266,23 @@ def render_seed(user, short):
 
     comment_html = "".join(render_comment(cm) for cm in top_level)
 
+    # Explore this Future tiles
+    type_map = [("people","People","◎"), ("place","Places","◇"), ("story","Stories","▣"), ("rule","Rules","◈"), ("object","Objects","○"), ("branch","Branches","↗")]
+    explore_tiles = ""
+    for t, label, icon in type_map:
+        cnt = len(groups.get(t, []))
+        explore_tiles += f'<a href="#{label.lower()}" class="explore-card"><div class="icon">{icon}</div><div class="name">{label}</div><div class="count">{cnt} {label}</div></a>'
+
+    # Recent Branches list
+    branch_contribs = groups.get("branch", [])[:3]
+    recent_branches = ""
+    if branch_contribs:
+        recent_branches = '<div class="branch-list">' + "".join(
+            f'<a href="/f/{short}" class="branch-item"><span class="branch-title">{esc(c["title"])}</span><span class="branch-meta">{esc(c["creator"])} · {rel_time(c["created_at"])}</span></a>'
+            for c in branch_contribs) + '</div>'
+    else:
+        recent_branches = '<div class="empty" style="margin-top:16px">No branches yet.</div>'
+
     # Comment form — always available (auto-login)
     comment_form = f"""
     <div class="comment-form">
@@ -1253,8 +1341,20 @@ def render_seed(user, short):
     </a>
     <div>
       <button class="btn-secondary" data-copy="/f/{short}">Share</button>
+      <button class="btn-secondary">Branch</button>
       {world_cta}
     </div>
+  </div>
+
+  <div class="explore-label">Explore this Future</div>
+  <div class="explore-grid">{explore_tiles}</div>
+
+  <div class="branches-section">
+    <div class="section-header">
+      <div class="section-title">Recent Branches</div>
+      <a href="/f/{short}" class="section-link">View all →</a>
+    </div>
+    {recent_branches}
   </div>
 
   {contribute_form}
@@ -1300,6 +1400,23 @@ def render_world(user, short):
                       + '</a>')
         sections += f'<section class="section" id="{label.lower()}s"><div class="section-title">{label}s</div><div class="cards">{cards}</div></section>'
 
+    # Timeline
+    timeline_items = ""
+    timeline_items += f'<div class="timeline-item"><div class="date">{rel_time(f["created_at"])}</div><div class="event">Seed created by {esc(f["creator"])}</div></div>'
+    for c in sorted(contribs, key=lambda x: x["created_at"]):
+        timeline_items += f'<div class="timeline-item"><div class="date">{rel_time(c["created_at"])}</div><div class="event">{esc(c["creator"])} added {TYPE_EN.get(c["type"], c["type"])}: {esc(c["title"])}</div></div>'
+    timeline_html = f'<section class="section" id="history"><div class="section-title">Timeline</div><div class="timeline">{timeline_items}</div></section>'
+
+    # Contributors
+    unique_creators = {}
+    for c in contribs:
+        if c["creator"] not in unique_creators:
+            unique_creators[c["creator"]] = c["creator"]
+    contrib_items = ""
+    for name in unique_creators:
+        contrib_items += f'<a href="/person/{quote(name)}" class="contributor"><span class="av">{avatar_initial(name)}</span> {esc(name)}</a>'
+    contributors_html = f'<section class="section"><div class="section-title">Contributors</div><div class="contributors">{contrib_items}</div></section>'
+
     body = f"""
 <div class="layout">
   <aside class="sidebar">
@@ -1317,6 +1434,8 @@ def render_world(user, short):
       <span>Since {rel_time(f["created_at"])}</span>
     </div>
     {sections}
+    {timeline_html}
+    {contributors_html}
     <div class="cta-box">
       <p>Help build this world.</p>
       <a href="/f/{short}" class="btn-primary" style="display:inline-block;text-decoration:none">Contribute</a>
@@ -1332,6 +1451,8 @@ def render_person(user, username):
     futures = conn.execute(
         "SELECT * FROM futures WHERE creator=? ORDER BY created_at DESC", (username,)).fetchall()
     conn.close()
+    total_branches = sum(f["branches"] for f in futures)
+    worlds = [f for f in futures if f["is_world"]]
 
     # Fetch recent activity
     recent_contribs = []
@@ -1352,6 +1473,16 @@ def render_person(user, username):
     else:
         fut_list = '<div class="empty">No futures started yet.</div>'
 
+    if worlds:
+        world_list = ""
+        for w in worlds:
+            ccount = len(get_contributions(w["id"]))
+            world_list += (f'<a href="/world/{w["short_id"]}" class="item">'
+                          f'<span class="title">{esc(w["title"])}</span>'
+                          f'<span class="meta">{ccount} contributions</span></a>')
+    else:
+        world_list = '<div class="empty">No worlds built yet.</div>'
+
     if recent_contribs:
         contrib_list = ""
         for c in recent_contribs:
@@ -1371,19 +1502,25 @@ def render_person(user, username):
       <p style="font-size:15px;color:var(--muted);margin-bottom:16px">A future explorer</p>
       <div class="stats">
         <div class="stat"><span class="stat-num">{started}</span><span class="stat-label">Futures</span></div>
-        <div class="stat"><span class="stat-num">{contributions_count}</span><span class="stat-label">Contributions</span></div>
         <div class="stat"><span class="stat-num">{worlds_count}</span><span class="stat-label">Worlds</span></div>
+        <div class="stat"><span class="stat-num">{total_branches}</span><span class="stat-label">Branches</span></div>
+        <div class="stat"><span class="stat-num">{contributions_count}</span><span class="stat-label">Contributions</span></div>
       </div>
     </div>
   </div>
 
   <div class="tabs">
-    <button class="tab active" data-tab="futures">Futures Started</button>
+    <button class="tab active" data-tab="futures">Futures I Started</button>
+    <button class="tab" data-tab="worlds">Worlds I Helped Build</button>
     <button class="tab" data-tab="contribs">Contributions</button>
   </div>
 
   <div id="futures" class="tab-content">
     <div class="item-list">{fut_list}</div>
+  </div>
+
+  <div id="worlds" class="tab-content" style="display:none">
+    <div class="item-list">{world_list}</div>
   </div>
 
   <div id="contribs" class="tab-content" style="display:none">

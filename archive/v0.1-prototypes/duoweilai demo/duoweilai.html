@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Duoweilai — What future do you imagine?</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap');
+
+    :root {
+      --bg: #0a0a0b;
+      --fg: #f4f4f5;
+      --muted: #a1a1aa;
+      --border: #27272a;
+      --accent: #e4e4e7;
+      --input-bg: #18181b;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* Header */
+    header {
+      padding: 28px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--fg);
+    }
+
+    .nav-link {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .nav-link:hover {
+      color: var(--fg);
+    }
+
+    /* Main */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 40px 24px 80px;
+      max-width: 720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .hero h1 {
+      font-size: clamp(28px, 5vw, 36px);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+    }
+
+    .hero p {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 300;
+    }
+
+    /* Input Area */
+    .seed-form {
+      width: 100%;
+      position: relative;
+    }
+
+    .input-wrapper {
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px 20px 16px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .input-wrapper:focus-within {
+      border-color: #3f3f46;
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.03);
+    }
+
+    textarea {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--fg);
+      font-size: 17px;
+      font-family: inherit;
+      resize: none;
+      min-height: 120px;
+      line-height: 1.6;
+    }
+
+    textarea::placeholder {
+      color: #52525b;
+    }
+
+    .form-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+      padding: 0 4px;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #52525b;
+    }
+
+    button.publish {
+      background: var(--fg);
+      color: var(--bg);
+      border: none;
+      border-radius: 999px;
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+      font-family: inherit;
+    }
+
+    button.publish:hover {
+      opacity: 0.9;
+    }
+
+    button.publish:active {
+      transform: scale(0.97);
+    }
+
+    button.publish:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Growing Seeds */
+    .seeds-section {
+      margin-top: 100px;
+      width: 100%;
+    }
+
+    .seeds-label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #52525b;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .seeds-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .seed-card {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.2s, background 0.2s;
+      display: block;
+    }
+
+    .seed-card:hover {
+      border-color: #3f3f46;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .seed-card .title {
+      font-size: 15px;
+      font-weight: 400;
+      margin-bottom: 6px;
+      line-height: 1.4;
+    }
+
+    .seed-card .meta {
+      font-size: 12px;
+      color: #71717a;
+    }
+
+    /* Footer */
+    footer {
+      padding: 24px 40px;
+      text-align: center;
+      font-size: 12px;
+      color: #3f3f46;
+    }
+
+    /* Success state (after publish) */
+    .result {
+      display: none;
+      text-align: center;
+      animation: fadeIn 0.4s ease;
+    }
+
+    .result.show {
+      display: block;
+    }
+
+    .result .label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    .result .url {
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      margin-bottom: 24px;
+      word-break: break-all;
+    }
+
+    .result .url a {
+      color: var(--fg);
+      text-decoration: none;
+      border-bottom: 1px solid #3f3f46;
+    }
+
+    .result .actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .result button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 999px;
+      padding: 9px 18px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.2s;
+    }
+
+    .result button:hover {
+      background: rgba(255,255,255,0.05);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Mobile */
+    @media (max-width: 640px) {
+      header {
+        padding: 20px 20px;
+      }
+      main {
+        padding: 24px 16px 60px;
+      }
+      .hero {
+        margin-bottom: 36px;
+      }
+      .seeds-section {
+        margin-top: 72px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">Duoweilai</div>
+    <a href="duoweilai03.html" class="nav-link">Explore</a>
+  </header>
+
+  <main>
+    <div class="hero" id="hero">
+      <h1>What future do you imagine?</h1>
+      <p>写下你想象的未来，它会成为一颗永久的种子。</p>
+    </div>
+
+    <div class="seed-form" id="form">
+      <div class="input-wrapper">
+        <textarea 
+          id="futureInput" 
+          placeholder="Describe a future..."
+          rows="4"
+        ></textarea>
+        <div class="form-footer">
+          <span class="hint">例如：如果大学没有固定校园，而是在世界各地不断移动呢？</span>
+          <button class="publish" id="publishBtn" onclick="publishFuture()">
+            Publish a Future
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success State -->
+    <div class="result" id="result">
+      <div class="label">Future Seed created</div>
+      <div class="url">
+        <a href="#" id="seedUrl">duoweilai.com/f/7A92K</a>
+      </div>
+      <div class="actions">
+        <button onclick="copyUrl()">Copy link</button>
+        <button onclick="resetForm()">Create another</button>
+      </div>
+    </div>
+
+    <!-- Growing Seeds -->
+    <section class="seeds-section" id="seeds">
+      <div class="seeds-label">Growing Futures</div>
+      <div class="seeds-grid">
+        <a href="duoweilai02.html" class="seed-card">
+          <div class="title">未来大学没有校园，而是在世界各地不断移动</div>
+          <div class="meta">Raphael · 3 hours ago · 12 branches</div>
+        </a>
+        <a href="duoweilai03.html" class="seed-card">
+          <div class="title">如果城市在夜间才真正苏醒，会发生什么？</div>
+          <div class="meta">Maya · 1 day ago · 7 branches</div>
+        </a>
+        <a href="duoweilai03.html" class="seed-card">
+          <div class="title">每个人都能拥有一座漂浮在海上的图书馆</div>
+          <div class="meta">Kai · 2 days ago · 21 branches</div>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    The Duoweilai Web · An open network of imagined futures
+  </footer>
+
+  <script>
+    const input = document.getElementById('futureInput');
+    const publishBtn = document.getElementById('publishBtn');
+    const form = document.getElementById('form');
+    const result = document.getElementById('result');
+    const hero = document.getElementById('hero');
+    const seeds = document.getElementById('seeds');
+    const seedUrl = document.getElementById('seedUrl');
+
+    // Simple ID generator
+    function generateId() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let id = '';
+      for (let i = 0; i < 5; i++) {
+        id += chars[Math.floor(Math.random() * chars.length)];
+      }
+      return id;
+    }
+
+    function publishFuture() {
+      const text = input.value.trim();
+      if (!text) return;
+
+      const id = generateId();
+      const url = `duoweilai.com/f/${id}`;
+
+      // Show result
+      seedUrl.textContent = url;
+      seedUrl.href = `#${id}`;
+
+      form.style.display = 'none';
+      hero.style.display = 'none';
+      seeds.style.display = 'none';
+      result.classList.add('show');
+    }
+
+    function copyUrl() {
+      const url = seedUrl.textContent;
+      navigator.clipboard.writeText('https://' + url).then(() => {
+        const btn = event.target;
+        const original = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => btn.textContent = original, 1500);
+      });
+    }
+
+    function resetForm() {
+      input.value = '';
+      result.classList.remove('show');
+      form.style.display = 'block';
+      hero.style.display = 'block';
+      seeds.style.display = 'block';
+      input.focus();
+    }
+
+    // Enable/disable button
+    input.addEventListener('input', () => {
+      publishBtn.disabled = !input.value.trim();
+    });
+
+    // Initial state
+    publishBtn.disabled = true;
+
+    // Keyboard shortcut
+    input.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        publishFuture();
+      }
+    });
+  </script>
+</body>
+</html>

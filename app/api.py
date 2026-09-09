@@ -5,8 +5,11 @@ v0.5 behavior (302 redirects or re-rendered pages). Validation errors on
 content endpoints are always JSON — same as v0.5. Deletes and edits always
 answer JSON; they're called from fetch().
 """
+
 import math
+
 from flask import Blueprint, current_app, g, jsonify, redirect, render_template, request
+
 from . import auth, services
 from .auth import is_json_request, login_required
 from .security import MAX_BODY, MAX_COMMENT, MAX_CONTRIB_TITLE, MAX_TITLE
@@ -61,14 +64,18 @@ def register():
     if len(password) < 6:
         return auth_error("register.html", "Password must be at least 6 characters.", form)
     if auth.get_user_by_email(email):
-        return auth_error("register.html",
-                          "That email is already registered. Try signing in or using a different email.", form)
+        return auth_error(
+            "register.html",
+            "That email is already registered. Try signing in or using a different email.",
+            form,
+        )
     uid = auth.register_with_system_id(email, password)
     if not uid:
         return auth_error("register.html", "Could not create account — please try again.", form)
     sys_id = auth.get_user_by_id(uid)["username"]
-    services.add_notification(uid, uid, "welcome", None,
-                              f"Welcome to Duoweilai! Your ID is {sys_id}.", force=True)
+    services.add_notification(
+        uid, uid, "welcome", None, f"Welcome to Duoweilai! Your ID is {sys_id}.", force=True
+    )
     auth.sign_in(uid)
     return respond({"ok": True, "id": sys_id}, f"/welcome?id={sys_id}")
 
@@ -163,21 +170,32 @@ def create_seed():
         if not parent:
             return json_error("Parent seed not found", 404)
 
-    short = services.create_future(title, body, g.user["username"], g.user["id"],
-                                   category=category, parent_short_id=parent_short or None)
+    short = services.create_future(
+        title,
+        body,
+        g.user["username"],
+        g.user["id"],
+        category=category,
+        parent_short_id=parent_short or None,
+    )
     if not short:
         return json_error("Could not create seed — please retry.", 500)
     if parent and parent["creator_id"] and parent["creator_id"] != g.user["id"]:
-        services.add_notification(parent["creator_id"], g.user["id"], "branch", short,
-                                  "branched off your future")
+        services.add_notification(
+            parent["creator_id"], g.user["id"], "branch", short, "branched off your future"
+        )
     return respond({"ok": True, "short": short}, f"/f/{short}")
 
 
 @api.route("/contribute", methods=["POST"])
 @login_required
 def contribute():
-    future_id, ctype, title, body = (form_value("future_id"), form_value("type"),
-                                     form_value("title"), form_value("body"))
+    future_id, ctype, title, body = (
+        form_value("future_id"),
+        form_value("type"),
+        form_value("title"),
+        form_value("body"),
+    )
     if ctype not in services.TYPE_EN:
         return json_error("Invalid type", 400)
     if not title:
@@ -189,13 +207,17 @@ def contribute():
     target = services.get_future_by_short(future_id)
     if not target:
         return json_error("Future not found", 404)
-    services.add_contribution(target["id"], ctype, title, body,
-                              g.user["username"], g.user["id"])
+    services.add_contribution(target["id"], ctype, title, body, g.user["username"], g.user["id"])
     services.maybe_make_world(future_id)
     if target["creator_id"] and target["creator_id"] != g.user["id"]:
         t = services.TYPE_EN.get(ctype, ctype)
-        services.add_notification(target["creator_id"], g.user["id"], "contribute", future_id,
-                                  f"contributed a {t}: {title}")
+        services.add_notification(
+            target["creator_id"],
+            g.user["id"],
+            "contribute",
+            future_id,
+            f"contributed a {t}: {title}",
+        )
     return respond({"ok": True}, f"/f/{future_id}")
 
 
@@ -219,16 +241,21 @@ def comment():
             return json_error("Invalid parent", 400)
     services.add_comment(target["id"], None, parent_id, g.user["id"], body)
     if target["creator_id"] and target["creator_id"] != g.user["id"]:
-        services.add_notification(target["creator_id"], g.user["id"], "comment", future_id,
-                                  "commented on your future")
+        services.add_notification(
+            target["creator_id"], g.user["id"], "comment", future_id, "commented on your future"
+        )
     # Replies also notify the parent comment's author (new) — skipping
     # self and the seed creator, who already got the notification above.
     if parent_id:
         parent_cm = services.get_comment(parent_id)
-        if (parent_cm and parent_cm["author_id"] != g.user["id"]
-                and parent_cm["author_id"] != target["creator_id"]):
-            services.add_notification(parent_cm["author_id"], g.user["id"], "reply", future_id,
-                                      "replied to your comment")
+        if (
+            parent_cm
+            and parent_cm["author_id"] != g.user["id"]
+            and parent_cm["author_id"] != target["creator_id"]
+        ):
+            services.add_notification(
+                parent_cm["author_id"], g.user["id"], "reply", future_id, "replied to your comment"
+            )
     return respond({"ok": True}, f"/f/{future_id}")
 
 
@@ -334,31 +361,58 @@ def edit_comment(cid):
 # JSON read API (new)
 # -------------------------------------------------
 def future_dict(f):
-    return {"short_id": f["short_id"], "title": f["title"], "body": f["body"],
-            "creator": f["creator"], "created_at": f["created_at"],
-            "category": f["category"] or "Unknown", "branches": f["branches"],
-            "views": f["views"], "is_world": bool(f["is_world"]),
-            "parent_short_id": f["parent_short_id"], "edited_at": f["edited_at"],
-            "when": services.rel_time(f["created_at"])}
+    return {
+        "short_id": f["short_id"],
+        "title": f["title"],
+        "body": f["body"],
+        "creator": f["creator"],
+        "created_at": f["created_at"],
+        "category": f["category"] or "Unknown",
+        "branches": f["branches"],
+        "views": f["views"],
+        "is_world": bool(f["is_world"]),
+        "parent_short_id": f["parent_short_id"],
+        "edited_at": f["edited_at"],
+        "when": services.rel_time(f["created_at"]),
+    }
 
 
 def contribution_dict(c):
-    return {"id": c["id"], "type": c["type"], "title": c["title"], "body": c["body"],
-            "creator": c["creator"], "created_at": c["created_at"],
-            "edited_at": c["edited_at"], "when": services.rel_time(c["created_at"])}
+    return {
+        "id": c["id"],
+        "type": c["type"],
+        "title": c["title"],
+        "body": c["body"],
+        "creator": c["creator"],
+        "created_at": c["created_at"],
+        "edited_at": c["edited_at"],
+        "when": services.rel_time(c["created_at"]),
+    }
 
 
 def comment_dict(c):
-    return {"id": c["id"], "parent_id": c["parent_id"], "author": c["username"] or "Anonymous",
-            "body": c["body"], "created_at": c["created_at"], "edited_at": c["edited_at"],
-            "when": services.rel_time(c["created_at"])}
+    return {
+        "id": c["id"],
+        "parent_id": c["parent_id"],
+        "author": c["username"] or "Anonymous",
+        "body": c["body"],
+        "created_at": c["created_at"],
+        "edited_at": c["edited_at"],
+        "when": services.rel_time(c["created_at"]),
+    }
 
 
 def notif_dict(n):
-    return {"id": n["id"], "type": n["type"], "actor": n["actor_name"] or "someone",
-            "text": n["text"], "future_short_id": n["future_short_id"],
-            "is_read": bool(n["is_read"]), "created_at": n["created_at"],
-            "when": services.rel_time(n["created_at"])}
+    return {
+        "id": n["id"],
+        "type": n["type"],
+        "actor": n["actor_name"] or "someone",
+        "text": n["text"],
+        "future_short_id": n["future_short_id"],
+        "is_read": bool(n["is_read"]),
+        "created_at": n["created_at"],
+        "when": services.rel_time(n["created_at"]),
+    }
 
 
 def _int_arg(name, default, lo, hi):
@@ -370,8 +424,13 @@ def _int_arg(name, default, lo, hi):
 
 @api.route("/health")
 def health():
-    return jsonify({"ok": True, "version": current_app.config["VERSION"],
-                    "db": str(current_app.config["DB_PATH"])})
+    return jsonify(
+        {
+            "ok": True,
+            "version": current_app.config["VERSION"],
+            "db": str(current_app.config["DB_PATH"]),
+        }
+    )
 
 
 @api.route("/futures")
@@ -381,9 +440,16 @@ def api_futures():
     category = request.args.get("cat") or None
     q = (request.args.get("q") or "").strip() or None
     rows, total = services.search_futures(page, per_page, category, q)
-    return jsonify({"ok": True, "items": [future_dict(f) for f in rows],
-                    "page": page, "per_page": per_page, "total": total,
-                    "pages": math.ceil(total / per_page) if total else 0})
+    return jsonify(
+        {
+            "ok": True,
+            "items": [future_dict(f) for f in rows],
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": math.ceil(total / per_page) if total else 0,
+        }
+    )
 
 
 @api.route("/futures/<short>")
@@ -391,12 +457,15 @@ def api_future_detail(short):
     f = services.get_future_by_short(short)
     if not f:
         return json_error("Not found", 404)
-    return jsonify({"ok": True, "future": future_dict(f),
-                    "contributions": [contribution_dict(c)
-                                      for c in services.get_contributions(f["id"])],
-                    "comments": [comment_dict(c) for c in services.get_comments(f["id"])],
-                    "child_branches": [future_dict(b)
-                                       for b in services.get_child_branches(short, 20)]})
+    return jsonify(
+        {
+            "ok": True,
+            "future": future_dict(f),
+            "contributions": [contribution_dict(c) for c in services.get_contributions(f["id"])],
+            "comments": [comment_dict(c) for c in services.get_comments(f["id"])],
+            "child_branches": [future_dict(b) for b in services.get_child_branches(short, 20)],
+        }
+    )
 
 
 @api.route("/futures/<short>/contributions")
@@ -410,8 +479,7 @@ def api_future_contributions(short):
     rows = services.get_contributions(f["id"])
     if ctype:
         rows = [c for c in rows if c["type"] == ctype]
-    return jsonify({"ok": True, "items": [contribution_dict(c) for c in rows],
-                    "total": len(rows)})
+    return jsonify({"ok": True, "items": [contribution_dict(c) for c in rows], "total": len(rows)})
 
 
 @api.route("/futures/<short>/comments")
@@ -420,8 +488,7 @@ def api_future_comments(short):
     if not f:
         return json_error("Not found", 404)
     rows = services.get_comments(f["id"])
-    return jsonify({"ok": True, "items": [comment_dict(c) for c in rows],
-                    "total": len(rows)})
+    return jsonify({"ok": True, "items": [comment_dict(c) for c in rows], "total": len(rows)})
 
 
 @api.route("/notifications")
@@ -429,8 +496,13 @@ def api_notifications():
     if not g.user:
         return json_error("Sign in required", 401)
     rows = services.get_notifications(g.user["id"])
-    return jsonify({"ok": True, "unread": services.unread_count(g.user["id"]),
-                    "items": [notif_dict(n) for n in rows]})
+    return jsonify(
+        {
+            "ok": True,
+            "unread": services.unread_count(g.user["id"]),
+            "items": [notif_dict(n) for n in rows],
+        }
+    )
 
 
 @api.route("/users/<username>")
@@ -440,10 +512,15 @@ def api_user(username):
     if not user and not started and not contribs:
         return json_error("No such user", 404)
     futures = services.get_futures_by_creator(username)
-    return jsonify({"ok": True, "username": username, "registered": bool(user),
-                    "stats": {"futures": started, "contributions": contribs,
-                              "worlds": worlds},
-                    "recent_futures": [future_dict(f) for f in futures[:10]]})
+    return jsonify(
+        {
+            "ok": True,
+            "username": username,
+            "registered": bool(user),
+            "stats": {"futures": started, "contributions": contribs, "worlds": worlds},
+            "recent_futures": [future_dict(f) for f in futures[:10]],
+        }
+    )
 
 
 @api.route("/feed")

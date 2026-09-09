@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一个 PR 的所有 job 共享状态
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # 1. Lint + 类型检查（快速反馈）
+  # ============================================================
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-lint-${{ hashFiles('requirements*.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Ruff check
+        run: ruff check app/ tests/ server.py
+
+      - name: Ruff format check
+        run: ruff format --check app/ tests/ server.py
+
+      - name: Mypy
+        run: mypy app/
+
+  # ============================================================
+  # 2. 测试（矩阵：Python 3.10 / 3.11 / 3.12）
+  # ============================================================
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-test-${{ matrix.python-version }}-${{ hashFiles('requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      # JSON 日志模式下的完整测试套件
+      - name: Run tests (JSON log format)
+        env:
+          DUOWEILAI_LOG_FORMAT: json
+          DUOWEILAI_LOG_LEVEL: WARNING
+        run: |
+          set -e
+          echo "▶ e2e_test.py"
+          python tests/e2e_test.py
+          echo "▶ auth_test.py"
+          python tests/auth_test.py
+          echo "▶ api_test.py"
+          python tests/api_test.py
+          echo "▶ test_logging.py"
+          python tests/test_logging.py
+
+      # 人类可读格式下也跑一遍（覆盖两种 formatter 分支）
+      - name: Run tests (human log format)
+        env:
+          DUOWEILAI_LOG_FORMAT: human
+          DUOWEILAI_LOG_LEVEL: WARNING
+        run: |
+          python tests/e2e_test.py
+          python tests/auth_test.py
+
+      # 覆盖率
+      - name: Coverage report
+        env:
+          DUOWEILAI_LOG_FORMAT: json
+          DUOWEILAI_LOG_LEVEL: WARNING
+        run: |
+          coverage run --source=app tests/e2e_test.py
+          coverage run --source=app --append tests/auth_test.py
+          coverage run --source=app --append tests/api_test.py
+          coverage run --source=app --append tests/test_logging.py
+          coverage report
+          coverage xml -o coverage.xml
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ============================================================
+  # 3. 安全审计（依赖扫描）
+  # ============================================================
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt --strict
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true

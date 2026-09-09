@@ -1,24 +1,28 @@
 """Security helpers: POST rate limiting, response headers, input caps."""
+
 import threading
 import time
 from collections import deque
+
 from flask import jsonify, render_template, request
 
 # Input caps (chars). Over the cap -> 400.
-MAX_TITLE = 500          # future title
+MAX_TITLE = 500  # future title
 MAX_CONTRIB_TITLE = 200  # contribution title
-MAX_BODY = 10000         # future/contribution body
-MAX_COMMENT = 5000       # comment body
+MAX_BODY = 10000  # future/contribution body
+MAX_COMMENT = 5000  # comment body
 
-RATE_LIMIT = 60          # POST requests ...
-RATE_WINDOW = 60         # ... per 60 seconds per IP
+RATE_LIMIT = 60  # POST requests ...
+RATE_WINDOW = 60  # ... per 60 seconds per IP
 
-CSP = ("default-src 'self'; "
-       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-       "font-src 'self' https://fonts.gstatic.com; "
-       "script-src 'self'; "
-       "img-src 'self' data:; "
-       "connect-src 'self'")
+CSP = (
+    "default-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "script-src 'self'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'"
+)
 
 
 class RateLimiter:
@@ -62,8 +66,9 @@ def rate_limit_check():
     if not limiter.allow(request.remote_addr or "?"):
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Too many requests — please slow down."}), 429
-        return render_template("error.html", title="429",
-                               message="Too many requests — please slow down."), 429
+        return render_template(
+            "error.html", title="429", message="Too many requests — please slow down."
+        ), 429
     return None
 
 

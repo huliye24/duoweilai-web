@@ -5,6 +5,7 @@ category + pagination) -> world upgrade -> profile -> notifications ->
 logout/login. Exercises the HTML pages and the form-POST side of the API.
 Uses its own scratch server on port 8091.
 """
+
 import os
 import re
 import sys
@@ -24,8 +25,7 @@ try:
     r = c.prime()
     check("Home returns 200", r.status == 200)
     check("CSRF cookie issued on first visit", bool(c.csrf))
-    check("Guest sees the world, not a login wall",
-          "A world of imagined futures" in r.text)
+    check("Guest sees the world, not a login wall", "A world of imagined futures" in r.text)
     check("Sign in link in nav", 'href="/login"' in r.text)
     check("Sign up link in nav", 'href="/register"' in r.text)
 
@@ -34,9 +34,11 @@ try:
     check("Register page loads", r.status == 200 and "Join Duoweilai" in r.text)
     check("No username field on register page", 'name="username"' not in r.text)
     r = c.post("/api/register", email="walker@example.com", password="secret123")
-    check("Register -> 302 to welcome reveal",
-          r.status == 302 and r.location == "/welcome?id=100010",
-          f"got {r.status} {r.location}")
+    check(
+        "Register -> 302 to welcome reveal",
+        r.status == 302 and r.location == "/welcome?id=100010",
+        f"got {r.status} {r.location}",
+    )
     uid = r.location.split("=")[1] if r.location else ""
     check("Assigned ID looks like a QQ number", uid.isdigit() and len(uid) == 6)
     check("Session cookie set on register", bool(c.session))
@@ -46,8 +48,7 @@ try:
 
     # -- 3. Publish a future (form POST) ------------------------------
     title = f"A future for E2E testing {stamp}"
-    r = c.post("/api/future", title=title, body="Testing the v0.6 flow.",
-               category="Cities")
+    r = c.post("/api/future", title=title, body="Testing the v0.6 flow.", category="Cities")
     check("Publish -> 302 to seed page", r.status == 302)
     m = re.search(r"/f/([A-Z2-9]{5})", r.location or "")
     short = m.group(1) if m else ""
@@ -66,13 +67,21 @@ try:
     check("Bogus seed 404s", c.get("/f/ZZZZZ").status == 404)
 
     # -- 5. Contribute People + Place ---------------------------------
-    r = c.post("/api/contribute", future_id=short, type="people",
-               title="Maya — Night Navigator",
-               body="Knows every rooftop in the city.")
+    r = c.post(
+        "/api/contribute",
+        future_id=short,
+        type="people",
+        title="Maya — Night Navigator",
+        body="Knows every rooftop in the city.",
+    )
     check("Contribute People -> 302", r.status == 302 and r.location == f"/f/{short}")
-    r = c.post("/api/contribute", future_id=short, type="place",
-               title="Rooftop Garden District",
-               body="Where the best conversations happen.")
+    r = c.post(
+        "/api/contribute",
+        future_id=short,
+        type="place",
+        title="Rooftop Garden District",
+        body="Where the best conversations happen.",
+    )
     check("Contribute Place -> 302", r.status == 302)
 
     # -- 6. Comment ----------------------------------------------------
@@ -84,8 +93,7 @@ try:
     check("Shows People contribution", "Maya — Night Navigator" in r.text)
     check("Shows Place contribution", "Rooftop Garden District" in r.text)
     check("Shows comment", "Love this future!" in r.text)
-    check("Section labels pluralized correctly",
-          ">People<" in r.text and ">Places<" in r.text)
+    check("Section labels pluralized correctly", ">People<" in r.text and ">Places<" in r.text)
 
     # -- 8. Explore: search, category, pagination ----------------------
     r = c.get("/explore")
@@ -104,8 +112,9 @@ try:
 
     # -- 9. World upgrade at 5+ contributions --------------------------
     for i in range(5):
-        c.post("/api/contribute", future_id=short, type="story",
-               title=f"Test story {i}", body="filler")
+        c.post(
+            "/api/contribute", future_id=short, type="story", title=f"Test story {i}", body="filler"
+        )
     r = c.get(f"/f/{short}")
     check("Seed upgrades to World", "World" in r.text)
     r = c.get(f"/world/{short}")
@@ -138,8 +147,10 @@ try:
     anon = Client(server)
     anon.prime()
     r = anon.post("/api/future", title="nope", body="nope")
-    check("Anonymous form publish -> login page (200)", r.status == 200
-          and "Sign in to continue" in r.text)
+    check(
+        "Anonymous form publish -> login page (200)",
+        r.status == 200 and "Sign in to continue" in r.text,
+    )
 
     # -- 14. Design language preserved -----------------------------------
     r = c.get("/")

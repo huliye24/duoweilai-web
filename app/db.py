@@ -9,9 +9,11 @@ Note: SQLite forbids ADD COLUMN with a UNIQUE constraint, so the email
 migration adds a plain column; only fresh databases get the UNIQUE index.
 (The v0.5 server had the same quirk — its UNIQUE ALTER silently failed.)
 """
+
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from flask import g, current_app
+
+from flask import current_app, g
 
 SESSION_MAX_AGE_DAYS = 30
 RESET_MAX_AGE_HOURS = 2

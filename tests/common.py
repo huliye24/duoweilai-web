@@ -11,6 +11,7 @@ Client mirrors what a browser does:
   2. every POST sends that token back via the X-CSRF-Token header
      (the hidden `csrf` form field works too — the server accepts either).
 """
+
 import http.client
 import json
 import os
@@ -34,13 +35,16 @@ class Server:
                 os.remove(self.db + suffix)
             except OSError:
                 pass
-        env = dict(os.environ,
-                   DUOWEILAI_PORT=str(port),
-                   DUOWEILAI_BIND="127.0.0.1",
-                   DUOWEILAI_DB=self.db)
+        env = dict(
+            os.environ, DUOWEILAI_PORT=str(port), DUOWEILAI_BIND="127.0.0.1", DUOWEILAI_DB=self.db
+        )
         self.proc = subprocess.Popen(
-            [sys.executable, "server.py"], cwd=ROOT,
-            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, env=env)
+            [sys.executable, "server.py"],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
         deadline = time.time() + 20
         while time.time() < deadline:
             try:

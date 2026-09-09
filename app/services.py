@@ -5,20 +5,35 @@ server-side search + pagination, seed branches (parent_short_id), edits
 (edited_at), and a force flag so the welcome notification isn't skipped.
 All functions use the per-request connection from app.db — no open/close.
 """
+
 import os
 import random
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+
 from .db import get_db
 
 TYPE_EN = {
-    "people": "People", "place": "Place", "story": "Story",
-    "rule": "Rule", "object": "Object", "branch": "Branch",
+    "people": "People",
+    "place": "Place",
+    "story": "Story",
+    "rule": "Rule",
+    "object": "Object",
+    "branch": "Branch",
 }
 
-CATEGORIES = ["Unknown", "Life", "Cities", "Education", "Culture",
-              "Relationships", "Work", "Civilization", "Technology"]
+CATEGORIES = [
+    "Unknown",
+    "Life",
+    "Cities",
+    "Education",
+    "Culture",
+    "Relationships",
+    "Work",
+    "Civilization",
+    "Technology",
+]
 
 SHORT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -66,8 +81,7 @@ def gen_short_id():
     return "".join(random.choice(SHORT_ID_ALPHABET) for _ in range(5))
 
 
-def create_future(title, body, creator, creator_id, category="Unknown",
-                  parent_short_id=None):
+def create_future(title, body, creator, creator_id, category="Unknown", parent_short_id=None):
     """Insert a seed; retry on the (astronomically rare) short_id clash."""
     db = get_db()
     for _ in range(8):
@@ -76,8 +90,18 @@ def create_future(title, body, creator, creator_id, category="Unknown",
             db.execute(
                 "INSERT INTO futures (id,short_id,title,body,category,creator,"
                 "creator_id,created_at,parent_short_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                (fid, short, title, body, category, creator, creator_id,
-                 now_iso(), parent_short_id))
+                (
+                    fid,
+                    short,
+                    title,
+                    body,
+                    category,
+                    creator,
+                    creator_id,
+                    now_iso(),
+                    parent_short_id,
+                ),
+            )
             db.commit()
             return short
         except sqlite3.IntegrityError:
@@ -97,8 +121,11 @@ def inc_views(short):
 
 def list_futures(limit=100):
     """Legacy: newest N seeds (home page, world checks)."""
-    return get_db().execute(
-        "SELECT * FROM futures ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    return (
+        get_db()
+        .execute("SELECT * FROM futures ORDER BY created_at DESC LIMIT ?", (limit,))
+        .fetchall()
+    )
 
 
 def search_futures(page=1, per_page=100, category=None, q=None):
@@ -117,21 +144,29 @@ def search_futures(page=1, per_page=100, category=None, q=None):
     total = db.execute(f"SELECT COUNT(*) FROM futures {clause}", params).fetchone()[0]
     rows = db.execute(
         f"SELECT * FROM futures {clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        params + [per_page, (page - 1) * per_page]).fetchall()
+        [*params, per_page, (page - 1) * per_page],
+    ).fetchall()
     return rows, total
 
 
 def get_child_branches(parent_short_id, limit=5):
     """Seeds branched off this one (the new Branch feature)."""
-    return get_db().execute(
-        "SELECT * FROM futures WHERE parent_short_id=? ORDER BY created_at DESC LIMIT ?",
-        (parent_short_id, limit)).fetchall()
+    return (
+        get_db()
+        .execute(
+            "SELECT * FROM futures WHERE parent_short_id=? ORDER BY created_at DESC LIMIT ?",
+            (parent_short_id, limit),
+        )
+        .fetchall()
+    )
 
 
 def edit_future(short, title, body, category):
     db = get_db()
-    db.execute("UPDATE futures SET title=?, body=?, category=?, edited_at=? WHERE short_id=?",
-               (title, body, category, now_iso(), short))
+    db.execute(
+        "UPDATE futures SET title=?, body=?, category=?, edited_at=? WHERE short_id=?",
+        (title, body, category, now_iso(), short),
+    )
     db.commit()
 
 
@@ -144,25 +179,28 @@ def delete_future(short):
     fid = f["id"]
     db.execute("DELETE FROM comments     WHERE future_id=?", (fid,))
     db.execute("DELETE FROM contributions WHERE future_id=?", (fid,))
-    db.execute("DELETE FROM futures       WHERE id=?",       (fid,))
+    db.execute("DELETE FROM futures       WHERE id=?", (fid,))
     db.commit()
     return True
 
 
 def get_futures_by_creator(username):
-    return get_db().execute(
-        "SELECT * FROM futures WHERE creator=? ORDER BY created_at DESC",
-        (username,)).fetchall()
+    return (
+        get_db()
+        .execute("SELECT * FROM futures WHERE creator=? ORDER BY created_at DESC", (username,))
+        .fetchall()
+    )
 
 
 def get_creator_stats(username):
     db = get_db()
-    started = db.execute("SELECT COUNT(*) FROM futures WHERE creator=?",
-                         (username,)).fetchone()[0]
-    contributions = db.execute("SELECT COUNT(*) FROM contributions WHERE creator=?",
-                               (username,)).fetchone()[0]
-    worlds = db.execute("SELECT COUNT(*) FROM futures WHERE creator=? AND is_world=1",
-                        (username,)).fetchone()[0]
+    started = db.execute("SELECT COUNT(*) FROM futures WHERE creator=?", (username,)).fetchone()[0]
+    contributions = db.execute(
+        "SELECT COUNT(*) FROM contributions WHERE creator=?", (username,)
+    ).fetchone()[0]
+    worlds = db.execute(
+        "SELECT COUNT(*) FROM futures WHERE creator=? AND is_world=1", (username,)
+    ).fetchone()[0]
     return started, contributions, worlds
 
 
@@ -170,9 +208,13 @@ def get_creator_stats(username):
 # Contributions
 # -------------------------------------------------
 def get_contributions(future_id):
-    return get_db().execute(
-        "SELECT * FROM contributions WHERE future_id=? ORDER BY created_at ASC",
-        (future_id,)).fetchall()
+    return (
+        get_db()
+        .execute(
+            "SELECT * FROM contributions WHERE future_id=? ORDER BY created_at ASC", (future_id,)
+        )
+        .fetchall()
+    )
 
 
 def get_contribution(cid):
@@ -184,7 +226,8 @@ def add_contribution(future_id, ctype, title, body, creator, author_id):
     cur = db.execute(
         "INSERT INTO contributions (future_id,type,title,body,creator,author_id,created_at)"
         " VALUES (?,?,?,?,?,?,?)",
-        (future_id, ctype, title, body, creator, author_id, now_iso()))
+        (future_id, ctype, title, body, creator, author_id, now_iso()),
+    )
     db.execute("UPDATE futures SET branches=branches+1 WHERE id=?", (future_id,))
     db.commit()
     return cur.lastrowid
@@ -195,8 +238,9 @@ def maybe_make_world(short):
     f = db.execute("SELECT * FROM futures WHERE short_id=?", (short,)).fetchone()
     if not f:
         return
-    cnt = db.execute("SELECT COUNT(*) FROM contributions WHERE future_id=?",
-                     (f["id"],)).fetchone()[0]
+    cnt = db.execute("SELECT COUNT(*) FROM contributions WHERE future_id=?", (f["id"],)).fetchone()[
+        0
+    ]
     if cnt >= 5 and not f["is_world"]:
         db.execute("UPDATE futures SET is_world=1 WHERE id=?", (f["id"],))
         db.commit()
@@ -204,17 +248,25 @@ def maybe_make_world(short):
 
 def edit_contribution(cid, title, body):
     db = get_db()
-    db.execute("UPDATE contributions SET title=?, body=?, edited_at=? WHERE id=?",
-               (title, body, now_iso(), cid))
+    db.execute(
+        "UPDATE contributions SET title=?, body=?, edited_at=? WHERE id=?",
+        (title, body, now_iso(), cid),
+    )
     db.commit()
 
 
 def get_contribution_author(cid):
     """Join row: author_id + future short_id, for the delete/edit owner check."""
-    return get_db().execute(
-        "SELECT c.author_id, c.future_id, f.short_id "
-        "FROM contributions c JOIN futures f ON f.id=c.future_id "
-        "WHERE c.id=?", (cid,)).fetchone()
+    return (
+        get_db()
+        .execute(
+            "SELECT c.author_id, c.future_id, f.short_id "
+            "FROM contributions c JOIN futures f ON f.id=c.future_id "
+            "WHERE c.id=?",
+            (cid,),
+        )
+        .fetchone()
+    )
 
 
 def delete_contribution(cid):
@@ -232,10 +284,15 @@ def delete_contribution(cid):
 
 
 def get_contributions_by_creator(username, limit=10):
-    return get_db().execute(
-        "SELECT c.*, f.short_id FROM contributions c JOIN futures f ON f.id=c.future_id "
-        "WHERE c.creator=? ORDER BY c.created_at DESC LIMIT ?",
-        (username, limit)).fetchall()
+    return (
+        get_db()
+        .execute(
+            "SELECT c.*, f.short_id FROM contributions c JOIN futures f ON f.id=c.future_id "
+            "WHERE c.creator=? ORDER BY c.created_at DESC LIMIT ?",
+            (username, limit),
+        )
+        .fetchall()
+    )
 
 
 # -------------------------------------------------
@@ -246,15 +303,22 @@ def add_comment(future_id, contribution_id, parent_id, author_id, body):
     cur = db.execute(
         "INSERT INTO comments (future_id,contribution_id,parent_id,author_id,body,created_at)"
         " VALUES (?,?,?,?,?,?)",
-        (future_id, contribution_id, parent_id, author_id, body, now_iso()))
+        (future_id, contribution_id, parent_id, author_id, body, now_iso()),
+    )
     db.commit()
     return cur.lastrowid
 
 
 def get_comments(future_id):
-    return get_db().execute(
-        "SELECT c.*, u.username FROM comments c LEFT JOIN users u ON u.id=c.author_id "
-        "WHERE c.future_id=? ORDER BY c.created_at ASC", (future_id,)).fetchall()
+    return (
+        get_db()
+        .execute(
+            "SELECT c.*, u.username FROM comments c LEFT JOIN users u ON u.id=c.author_id "
+            "WHERE c.future_id=? ORDER BY c.created_at ASC",
+            (future_id,),
+        )
+        .fetchall()
+    )
 
 
 def get_comment(cid):
@@ -263,8 +327,7 @@ def get_comment(cid):
 
 def edit_comment(cid, body):
     db = get_db()
-    db.execute("UPDATE comments SET body=?, edited_at=? WHERE id=?",
-               (body, now_iso(), cid))
+    db.execute("UPDATE comments SET body=?, edited_at=? WHERE id=?", (body, now_iso(), cid))
     db.commit()
 
 
@@ -291,21 +354,30 @@ def add_notification(user_id, actor_id, ntype, short, text, force=False):
     db.execute(
         "INSERT INTO notifications (user_id,actor_id,type,future_short_id,text,created_at)"
         " VALUES (?,?,?,?,?,?)",
-        (user_id, actor_id, ntype, short, text, now_iso()))
+        (user_id, actor_id, ntype, short, text, now_iso()),
+    )
     db.commit()
 
 
 def get_notifications(user_id):
-    return get_db().execute(
-        "SELECT n.*, u.username AS actor_name FROM notifications n "
-        "LEFT JOIN users u ON u.id=n.actor_id WHERE n.user_id=? "
-        "ORDER BY n.created_at DESC LIMIT 100", (user_id,)).fetchall()
+    return (
+        get_db()
+        .execute(
+            "SELECT n.*, u.username AS actor_name FROM notifications n "
+            "LEFT JOIN users u ON u.id=n.actor_id WHERE n.user_id=? "
+            "ORDER BY n.created_at DESC LIMIT 100",
+            (user_id,),
+        )
+        .fetchall()
+    )
 
 
 def unread_count(user_id):
-    return get_db().execute(
-        "SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0",
-        (user_id,)).fetchone()[0]
+    return (
+        get_db()
+        .execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0", (user_id,))
+        .fetchone()[0]
+    )
 
 
 def mark_notifications_read(user_id):
@@ -322,20 +394,45 @@ def get_feed(limit=30):
     db = get_db()
     items = []
     for f in db.execute("SELECT * FROM futures ORDER BY created_at DESC LIMIT 200"):
-        items.append({"kind": "future", "time": f["created_at"], "actor": f["creator"],
-                      "short": f["short_id"], "text": f["title"], "type": None})
+        items.append(
+            {
+                "kind": "future",
+                "time": f["created_at"],
+                "actor": f["creator"],
+                "short": f["short_id"],
+                "text": f["title"],
+                "type": None,
+            }
+        )
     for c in db.execute(
-            "SELECT c.*, f.short_id FROM contributions c JOIN futures f ON f.id=c.future_id "
-            "ORDER BY c.created_at DESC LIMIT 200"):
-        items.append({"kind": "contribution", "time": c["created_at"], "actor": c["creator"],
-                      "short": c["short_id"], "text": c["title"], "type": c["type"]})
+        "SELECT c.*, f.short_id FROM contributions c JOIN futures f ON f.id=c.future_id "
+        "ORDER BY c.created_at DESC LIMIT 200"
+    ):
+        items.append(
+            {
+                "kind": "contribution",
+                "time": c["created_at"],
+                "actor": c["creator"],
+                "short": c["short_id"],
+                "text": c["title"],
+                "type": c["type"],
+            }
+        )
     for cm in db.execute(
-            "SELECT cm.*, u.username, f.short_id FROM comments cm "
-            "LEFT JOIN users u ON u.id=cm.author_id JOIN futures f ON f.id=cm.future_id "
-            "ORDER BY cm.created_at DESC LIMIT 200"):
-        items.append({"kind": "comment", "time": cm["created_at"],
-                      "actor": cm["username"] or "Anonymous",
-                      "short": cm["short_id"], "text": cm["body"], "type": None})
+        "SELECT cm.*, u.username, f.short_id FROM comments cm "
+        "LEFT JOIN users u ON u.id=cm.author_id JOIN futures f ON f.id=cm.future_id "
+        "ORDER BY cm.created_at DESC LIMIT 200"
+    ):
+        items.append(
+            {
+                "kind": "comment",
+                "time": cm["created_at"],
+                "actor": cm["username"] or "Anonymous",
+                "short": cm["short_id"],
+                "text": cm["body"],
+                "type": None,
+            }
+        )
     items.sort(key=lambda x: x["time"], reverse=True)
     return items[:limit]
 
@@ -351,12 +448,14 @@ def log_password_reset(user, reset_url):
         try:
             import smtplib
             from email.mime.text import MIMEText
+
             msg = MIMEText(
                 f"Hello {user['username']},\n\n"
                 f"Someone (hopefully you) asked to reset the password for your Duoweilai account.\n\n"
                 f"Reset link (valid for 2 hours): {reset_url}\n\n"
                 f"If you didn't ask for this, you can safely ignore this email.\n\n"
-                f"— Duoweilai")
+                f"— Duoweilai"
+            )
             msg["Subject"] = "Reset your Duoweilai password"
             msg["From"] = os.environ.get("DUOWEILAI_SMTP_FROM", "no-reply@duoweilai.com")
             msg["To"] = user["email"]
@@ -371,8 +470,10 @@ def log_password_reset(user, reset_url):
             return True
         except Exception as e:
             print(f"  [reset-mail] SMTP failed for {user['email']}: {e}")
-    line = (f"\n  [reset-mail] To: {user['email']} ({user['username']})\n"
-            f"  [reset-mail] Link: {reset_url}\n")
+    line = (
+        f"\n  [reset-mail] To: {user['email']} ({user['username']})\n"
+        f"  [reset-mail] Link: {reset_url}\n"
+    )
     print(line, flush=True)
     try:
         with open("reset_link.log", "a", encoding="utf-8") as fh:

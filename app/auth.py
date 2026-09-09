@@ -10,13 +10,17 @@ Ported from v0.5: pbkdf2 passwords, 30-day session cookies
 (`duoweilai_session`), email-based password reset. New in the Flask
 build: double-submit-cookie CSRF on every POST.
 """
+
 import functools
 import hashlib
+import itertools
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+
 from flask import g, jsonify, render_template, request
-from .db import get_db, SESSION_MAX_AGE_DAYS, RESET_MAX_AGE_HOURS
+
+from .db import RESET_MAX_AGE_HOURS, SESSION_MAX_AGE_DAYS, get_db
 from .services import now_iso
 
 SESSION_COOKIE = "duoweilai_session"
@@ -60,7 +64,8 @@ def create_user(username, password, email=None):
     try:
         cur = db.execute(
             "INSERT INTO users (username, password_hash, email, created_at) VALUES (?,?,?,?)",
-            (username, hash_password(password), email, now_iso()))
+            (username, hash_password(password), email, now_iso()),
+        )
         db.commit()
         return cur.lastrowid
     except Exception:  # sqlite3.IntegrityError (imported lazily to avoid a cycle)
@@ -73,19 +78,21 @@ def is_premium_id(n):
     back for the operator to hand out (server.py adduser). Loose on
     purpose; skipping a plain number costs nothing."""
     s = str(n)
-    if len(set(s)) == 1:                              # 888888 — all same digit
+    if len(set(s)) == 1:  # 888888 — all same digit
         return True
-    if s.endswith("000"):                             # 100000, 888000 — round
+    if s.endswith("000"):  # 100000, 888000 — round
         return True
-    if any(d * 4 in s for d in "0123456789"):         # 166666 — 4 in a row
+    if any(d * 4 in s for d in "0123456789"):  # 166666 — 4 in a row
         return True
     if len(s) >= 4:
-        a, b, c, d = s[-4:]
-        if a != d and (a == b and c == d              # AABB tail (…8866)
-                       or a == c and b == d):         # ABAB tail (…6868)
+        a, b, c, d = list(s[-4:])
+        if a != d and (
+            (a == b and c == d)  # AABB tail (…8866)
+            or (a == c and b == d)
+        ):  # ABAB tail (…6868)
             return True
-    pairs = list(zip(s, s[1:]))
-    if all(int(b) - int(a) == 1 for a, b in pairs):   # 123456 — ascending
+    pairs = list(itertools.pairwise(s))
+    if all(int(b) - int(a) == 1 for a, b in pairs):  # 123456 — ascending
         return True
     return all(int(a) - int(b) == 1 for a, b in pairs)  # 654321 — descending
 
@@ -94,8 +101,8 @@ def next_system_id():
     """Smallest unassigned ID above the current maximum, skipping 靓号."""
     db = get_db()
     row = db.execute(
-        "SELECT MAX(CAST(username AS INTEGER)) AS maxid FROM users "
-        "WHERE username GLOB '[0-9]*'").fetchone()
+        "SELECT MAX(CAST(username AS INTEGER)) AS maxid FROM users WHERE username GLOB '[0-9]*'"
+    ).fetchone()
     n = max(ID_BASE - 1, row["maxid"] or 0)
     while True:
         n += 1
@@ -118,7 +125,6 @@ def register_with_system_id(email, password, attempts=3):
 
 def authenticate(identifier, password):
     """Sign in by system ID, email, or legacy v0.5 username."""
-    db = get_db()
     if "@" in identifier:
         row = get_user_by_email(identifier)
     else:
@@ -129,8 +135,10 @@ def authenticate(identifier, password):
 def create_session(user_id):
     token = secrets.token_hex(32)
     db = get_db()
-    db.execute("INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)",
-               (token, user_id, now_iso()))
+    db.execute(
+        "INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)",
+        (token, user_id, now_iso()),
+    )
     db.commit()
     return token
 
@@ -140,8 +148,8 @@ def get_user_by_session(token):
         return None
     db = get_db()
     return db.execute(
-        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?",
-        (token,)).fetchone()
+        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?", (token,)
+    ).fetchone()
 
 
 def delete_session(token):
@@ -169,8 +177,10 @@ def create_password_reset(user_id):
     expires = (datetime.now(timezone.utc) + timedelta(hours=RESET_MAX_AGE_HOURS)).isoformat()
     db = get_db()
     db.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
-    db.execute("INSERT INTO password_resets (user_id, token, expires_at) VALUES (?,?,?)",
-               (user_id, token, expires))
+    db.execute(
+        "INSERT INTO password_resets (user_id, token, expires_at) VALUES (?,?,?)",
+        (user_id, token, expires),
+    )
     db.commit()
     return token
 
@@ -178,8 +188,9 @@ def create_password_reset(user_id):
 def get_password_reset(token):
     """Return the user row for a valid, unexpired reset token, else None."""
     db = get_db()
-    row = db.execute("SELECT * FROM password_resets WHERE token=? AND expires_at>?",
-                     (token, now_iso())).fetchone()
+    row = db.execute(
+        "SELECT * FROM password_resets WHERE token=? AND expires_at>?", (token, now_iso())
+    ).fetchone()
     return get_user_by_id(row["user_id"]) if row else None
 
 
@@ -188,8 +199,9 @@ def consume_password_reset(token, new_password):
     if not user:
         return False
     db = get_db()
-    db.execute("UPDATE users SET password_hash=? WHERE id=?",
-               (hash_password(new_password), user["id"]))
+    db.execute(
+        "UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), user["id"])
+    )
     db.execute("DELETE FROM password_resets WHERE token=?", (token,))
     db.commit()
     return True
@@ -227,6 +239,7 @@ def sign_out():
 def login_required(view):
     """Gate for write endpoints. JSON clients get 401; form posts get the
     friendly 'Sign in to continue' page (v0.5 behavior, 200)."""
+
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
         if g.get("user"):
@@ -234,6 +247,7 @@ def login_required(view):
         if is_json_request():
             return jsonify({"ok": False, "error": "Sign in required"}), 401
         return render_template("need_login.html")
+
     return wrapped
 
 
@@ -261,15 +275,16 @@ def verify_csrf():
     X-CSRF-Token header, the `csrf` form field, or a `csrf` JSON field."""
     if request.method != "POST":
         return None
-    sent = (request.headers.get("X-CSRF-Token", "")
-            or request.form.get("csrf", "")
-            or (request.get_json(silent=True) or {}).get("csrf", ""))
+    sent = (
+        request.headers.get("X-CSRF-Token", "")
+        or request.form.get("csrf", "")
+        or (request.get_json(silent=True) or {}).get("csrf", "")
+    )
     if sent and secrets.compare_digest(sent, g.get("_csrf_token", "")):
         return None
     if request.path.startswith("/api/"):
         return jsonify({"ok": False, "error": "Invalid or missing CSRF token."}), 403
-    return render_template("error.html", title="403",
-                           message="Invalid or missing CSRF token."), 403
+    return render_template("error.html", title="403", message="Invalid or missing CSRF token."), 403
 
 
 def set_csrf_cookie(resp):
@@ -277,10 +292,16 @@ def set_csrf_cookie(resp):
     Not httponly on purpose — the fetch() wrapper reads it from the meta
     tag, and having it readable keeps debugging simple."""
     from flask import current_app
+
     if g.get("_csrf_new"):
-        resp.set_cookie(CSRF_COOKIE, g._csrf_token, max_age=SESSION_MAX_AGE,
-                        httponly=False, samesite="Lax",
-                        secure=current_app.config["SECURE_COOKIE"])
+        resp.set_cookie(
+            CSRF_COOKIE,
+            g._csrf_token,
+            max_age=SESSION_MAX_AGE,
+            httponly=False,
+            samesite="Lax",
+            secure=current_app.config["SECURE_COOKIE"],
+        )
     return resp
 
 
@@ -288,11 +309,17 @@ def apply_session_cookie(resp):
     """after_request hook: attach the session cookie set by sign_in(),
     or clear it after sign_out()."""
     from flask import current_app
+
     tok = g.pop("_set_session", None)
     if tok is not None:
-        resp.set_cookie(SESSION_COOKIE, tok, max_age=SESSION_MAX_AGE,
-                        httponly=True, samesite="Lax",
-                        secure=current_app.config["SECURE_COOKIE"])
+        resp.set_cookie(
+            SESSION_COOKIE,
+            tok,
+            max_age=SESSION_MAX_AGE,
+            httponly=True,
+            samesite="Lax",
+            secure=current_app.config["SECURE_COOKIE"],
+        )
     if g.pop("_clear_session", False):
         resp.delete_cookie(SESSION_COOKIE, path="/")
     return resp

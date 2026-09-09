@@ -1,0 +1,224 @@
+name: Release
+
+# 发布工作流
+# --------------------------------------------------
+# 触发：
+#   1. push tag v* （自动发布）
+#   2. 手动 workflow_dispatch（应急发布指定版本）
+#
+# 步骤：
+#   verify → build → release → (可选 deploy)
+#
+# 部署说明：
+#   - tag 发布默认不自动部署生产（避免误操作）
+#   - 如需部署，手动触发 workflow_dispatch 并勾选 deploy_to_production
+#   - 日常 push main 触发的部署由 deploy.yml 处理
+# --------------------------------------------------
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.7.0)"
+        required: true
+        default: "v0.7.0"
+      deploy_to_production:
+        description: "Deploy to production after release?"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================
+  # 校验：tag 必须与 app/__init__.py 里的 VERSION 一致
+  # ============================================================
+  verify:
+    name: Verify version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Extract tag version
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Tag version: ${VERSION}"
+
+      - name: Check VERSION in app/__init__.py
+        run: |
+          expected="VERSION = \"${VERSION}\""
+          if ! grep -qF "$expected" app/__init__.py; then
+            echo "::error::app/__init__.py does not contain: $expected"
+            echo "Current VERSION line:"
+            grep -n VERSION app/__init__.py
+            exit 1
+          fi
+          echo "✓ VERSION matches tag"
+
+      - name: Sanity check (changelog / smoke)
+        run: |
+          # 检查关键文件存在
+          for f in app/__init__.py app/web.py app/api.py app/auth.py app/db.py \
+                   app/security.py app/services.py app/logging_setup.py \
+                   server.py requirements.txt pyproject.toml \
+                   .github/workflows/ci.yml .github/workflows/deploy.yml; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing required file: $f"
+              exit 1
+            fi
+          done
+          echo "✓ All required files present"
+
+  # ============================================================
+  # 构建分发包（sdist + wheel）
+  # ============================================================
+  build:
+    name: Build artifacts
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: pip install build
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # ============================================================
+  # 创建 GitHub Release（带自动生成 release notes）
+  # ============================================================
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [verify, build]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## 安装
+
+            ```bash
+            pip install duoweilai-web-${{ github.ref_name }}-py3-none-any.whl
+            ```
+
+            ## 变更说明
+
+            详见自动生成的 release notes。
+
+            ## 部署
+
+            - 生产部署：合并到 `main` 后由 `.github/workflows/deploy.yml` 自动部署
+            - 手动部署：在本 Release 页面触发 "Re-run jobs" 并勾选 deploy_to_production
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+
+  # ============================================================
+  # 可选：发布后部署到生产（默认不触发）
+  # ============================================================
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: release
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_production == 'true'
+    environment:
+      name: production
+      url: https://duoweilai.com
+    steps:
+      - name: Confirm deploy intent
+        run: |
+          echo "::warning::手动部署已启用 —— ref: ${{ github.ref_name }}"
+          echo "  触发者: ${{ github.actor }}"
+          echo "  Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: SSH deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || secrets.DEPLOY_PATH || '/opt/duoweilai' }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          ssh "$DEPLOY_HOST" bash -s << DEPLOY_SCRIPT
+          set -euo pipefail
+          APP_DIR="${DEPLOY_PATH}"
+          REPO_DIR="${DEPLOY_PATH}-repo"
+          REF="${REF}"
+
+          cd "\$REPO_DIR"
+          git fetch --depth 50 origin "\$REF"
+          git reset --hard "origin/\$REF"
+          echo "==> 部署 \$REF 到 \$APP_DIR"
+
+          BACKUP_DIR="\$APP_DIR/.backups"
+          mkdir -p "\$BACKUP_DIR"
+          ts=\$(date +%Y%m%d-%H%M%S)
+          tar -czf "\$BACKUP_DIR/release-\${ts}.tar.gz" \\
+              --exclude='duoweilai.db' --exclude='secret.env' \\
+              -C "\$APP_DIR" app server.py requirements.txt 2>/dev/null || true
+
+          for item in app server.py requirements.txt pyproject.toml; do
+            if [ -e "\$REPO_DIR/\$item" ]; then
+              rm -rf "\$APP_DIR/\$item"
+              cp -r "\$REPO_DIR/\$item" "\$APP_DIR/\$item"
+            fi
+          done
+          \$APP_DIR/venv/bin/pip install -q -r "\$APP_DIR/requirements.txt"
+          chown -R duoweilai:duoweilai "\$APP_DIR"
+          systemctl restart duoweilai
+          sleep 3
+          HEALTH=\$(curl -fsS --max-time 5 http://127.0.0.1:8090/api/health)
+          echo "✓ 健康检查: \$HEALTH"
+          echo "Release \$REF 部署完成 (by \$ACTOR)"
+          DEPLOY_SCRIPT

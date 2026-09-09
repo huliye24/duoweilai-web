@@ -1,0 +1,14 @@
+# 开发依赖（仅开发/CI 用，不进生产）
+# 安装: pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# 代码风格 + 静态检查
+ruff>=0.6
+mypy>=1.11
+
+# 测试 + 覆盖率
+coverage>=7.5
+
+# 安全审计（CI 用）
+pip-audit>=2.7

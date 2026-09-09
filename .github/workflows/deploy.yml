@@ -1,0 +1,264 @@
+name: Deploy
+
+# GitHub Actions → 云服务器自动同步
+# --------------------------------------------------
+# 触发：
+#   1. push 到 main（合并 PR 后自动部署）
+#   2. 手动 workflow_dispatch（应急回滚或重部署）
+#
+# 前置 Secrets（仓库 Settings → Secrets and variables → Actions）：
+#   SSH_PRIVATE_KEY  — GitHub Actions 与服务器通讯用的私钥
+#                       公钥需放在服务器的 ~/.ssh/authorized_keys (root 用户)
+#   DEPLOY_HOST      — 形如 root@1.2.3.4 或 ubuntu@my.server.com
+#   DEPLOY_PATH      — 服务器上的部署目录，默认 /opt/duoweilai
+#   (可选) DEPLOY_HEALTH_URL — 健康检查 URL，默认 http://127.0.0.1:8090/api/health
+#
+# 工作流：
+#   1. 等待 CI 全部通过
+#   2. SSH 到服务器 → git pull → 同步代码到 /opt/duoweilai → 重启 → 健康检查
+#   3. 失败自动回滚到上一个 commit
+# --------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+    # 不触发 tag（tag 由 release.yml 单独处理）
+    tags-ignore: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch / tag / sha)"
+        required: false
+        default: "main"
+      reason:
+        description: "Deploy reason (for audit log)"
+        required: false
+        default: "manual"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false  # 不要取消正在进行的部署（避免半成品）
+
+permissions:
+  contents: read
+  id-token: write  # 预留给 OIDC（将来对接云厂商免密钥）
+
+jobs:
+  # ============================================================
+  # 等待 CI 通过
+  # ============================================================
+  wait-ci:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Wait for CI workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.sha;
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: sha,
+              status: 'in_progress',
+            });
+            // 当前 push 触发的 CI run 也在列表里，等到只剩它自己
+            for (let i = 0; i < 60; i++) {
+              const { data: runs } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'ci.yml',
+                head_sha: sha,
+              });
+              const current = runs.workflow_runs.filter(
+                r => r.head_sha === sha && r.event === 'push'
+              );
+              const allDone = current.every(r => r.status === 'completed');
+              const anyFailed = current.some(r => r.conclusion === 'failure');
+              if (anyFailed) {
+                core.setFailed('CI failed — deploy aborted');
+                return;
+              }
+              if (allDone && current.length > 0) {
+                const allPassed = current.every(r => r.conclusion === 'success');
+                if (!allPassed) {
+                  core.setFailed('CI did not pass — deploy aborted');
+                  return;
+                }
+                core.info('✓ CI passed, proceeding to deploy');
+                return;
+              }
+              core.info(`CI still running (${i * 10}s elapsed)...`);
+              await new Promise(r => setTimeout(r, 10000));
+            }
+            core.setFailed('CI timeout after 10 minutes');
+
+  # ============================================================
+  # 部署到生产服务器
+  # ============================================================
+  deploy:
+    name: Deploy to ${{ vars.DEPLOY_HOST || secrets.DEPLOY_HOST }}
+    runs-on: ubuntu-latest
+    needs: wait-ci
+    environment:
+      name: production
+      url: https://duoweilai.com
+    steps:
+      - name: Resolve ref
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="${{ github.event.inputs.ref }}"
+          else
+            REF="${GITHUB_REF#refs/heads/}"
+          fi
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          echo "Deploying ref: ${REF}"
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add host key (skip on first run)
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          # 注：首次部署建议手动 ssh 一遍把 host key 加进 known_hosts
+
+      - name: Deploy via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || secrets.DEPLOY_PATH || '/opt/duoweilai' }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          REF: ${{ steps.ref.outputs.ref }}
+          REASON: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reason || 'push-to-main' }}
+          COMMIT: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          ssh "$DEPLOY_HOST" bash -s << DEPLOY_SCRIPT
+          set -euo pipefail
+
+          APP_DIR="${DEPLOY_PATH}"
+          REPO_DIR="${DEPLOY_PATH}-repo"     # 裸仓库位置（不在 APP_DIR 内部，避免污染运行目录）
+          SERVICE=duoweilai
+          HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8090/api/health}"
+          COMMIT="${COMMIT}"
+          ACTOR="${ACTOR}"
+          REASON="${REASON}"
+
+          echo "==> 部署目标: \$APP_DIR"
+          echo "==> 触发者:   \$ACTOR"
+          echo "==> 原因:     \$REASON"
+          echo "==> Commit:   \$COMMIT"
+
+          # --- 1. 首次部署：clone 仓库到 REPO_DIR ---
+          if [ ! -d "\$REPO_DIR/.git" ]; then
+            echo "==> 1/6 首次部署：clone 仓库到 \$REPO_DIR"
+            mkdir -p "\$(dirname \$REPO_DIR)"
+            git clone --depth 50 "$REPO_URL" "\$REPO_DIR"
+          fi
+
+          # --- 2. fetch + reset 到指定 ref ---
+          echo "==> 2/6 fetch + reset 到 $REF"
+          cd "\$REPO_DIR"
+          git fetch --depth 50 origin "$REF" 2>/dev/null || git fetch --depth 50 origin
+          git reset --hard "origin/$REF" 2>/dev/null || git reset --hard "$COMMIT"
+          echo "    当前 HEAD: \$(git rev-parse --short HEAD)"
+
+          # --- 3. 备份当前生产代码（5 个快照轮转）---
+          echo "==> 3/6 备份当前生产代码"
+          BACKUP_DIR="\$APP_DIR/.backups"
+          mkdir -p "\$BACKUP_DIR"
+          ts=\$(date +%Y%m%d-%H%M%S)
+          if [ -d "\$APP_DIR/app" ]; then
+            tar -czf "\$BACKUP_DIR/app-\$ts.tar.gz" \\
+                --exclude='duoweilai.db' --exclude='secret.env' \\
+                --exclude='venv' --exclude='__pycache__' \\
+                -C "\$APP_DIR" app server.py requirements.txt 2>/dev/null || true
+            ls -1t "\$BACKUP_DIR"/app-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+            echo "    备份: \$BACKUP_DIR/app-\$ts.tar.gz"
+          fi
+
+          # --- 4. 同步代码到 APP_DIR（保留 db / secret.env / venv）---
+          echo "==> 4/6 同步代码（保留 db / secret.env / venv）"
+          mkdir -p "\$APP_DIR"
+          for item in app server.py requirements.txt pyproject.toml; do
+            if [ -e "\$REPO_DIR/\$item" ]; then
+              rm -rf "\$APP_DIR/\$item"
+              cp -r "\$REPO_DIR/\$item" "\$APP_DIR/\$item"
+            fi
+          done
+          # 部署元信息
+          echo "\$COMMIT" > "\$APP_DIR/.last-deploy-commit"
+          echo "\$ACTOR"  > "\$APP_DIR/.last-deploy-actor"
+          echo "\$(date -Iseconds) (\$REASON)" > "\$APP_DIR/.last-deploy-info"
+
+          # --- 5. 依赖更新 ---
+          echo "==> 5/6 更新 Python 依赖（仅当 requirements.txt 变化时）"
+          if [ ! -f "\$APP_DIR/.requirements.sha256" ] || \\
+             [ "\$(sha256sum < \$REPO_DIR/requirements.txt | cut -d' ' -f1)" != \\
+               "\$(cat \$APP_DIR/.requirements.sha256 2>/dev/null || echo)" ]; then
+            \$APP_DIR/venv/bin/pip install -q -r "\$APP_DIR/requirements.txt"
+            sha256sum < "\$APP_DIR/requirements.txt" | cut -d' ' -f1 > "\$APP_DIR/.requirements.sha256"
+            echo "    ✓ 依赖已更新"
+          else
+            echo "    依赖未变，跳过"
+          fi
+
+          # --- 6. 重启 + 健康检查 ---
+          echo "==> 6/6 重启服务 + 健康检查"
+          chown -R duoweilai:duoweilai "\$APP_DIR" || true
+          systemctl restart "\$SERVICE"
+          sleep 3
+          if systemctl is-active --quiet "\$SERVICE"; then
+            echo "    ✓ systemd 服务运行中"
+          else
+            echo "    ✗ 服务启动失败！回滚中..."
+            systemctl status "\$SERVICE" --no-pager | head -20
+            LATEST_BACKUP=\$(ls -1t "\$BACKUP_DIR"/app-*.tar.gz 2>/dev/null | head -1)
+            if [ -n "\$LATEST_BACKUP" ]; then
+              cd "\$APP_DIR"
+              tar -xzf "\$LATEST_BACKUP"
+              systemctl restart "\$SERVICE"
+              echo "    已回滚到 \$LATEST_BACKUP"
+            fi
+            exit 1
+          fi
+
+          HEALTH=\$(curl -fsS --max-time 5 "\$HEALTH_URL" 2>&1) || {
+            echo "    ✗ 健康检查失败，回滚中..."
+            LATEST_BACKUP=\$(ls -1t "\$BACKUP_DIR"/app-*.tar.gz 2>/dev/null | head -1)
+            if [ -n "\$LATEST_BACKUP" ]; then
+              cd "\$APP_DIR"
+              tar -xzf "\$LATEST_BACKUP"
+              systemctl restart "\$SERVICE"
+            fi
+            journalctl -u "\$SERVICE" -n 30 --no-pager
+            exit 1
+          }
+          echo "    ✓ 健康检查: \$HEALTH"
+
+          echo ""
+          echo "✓ 部署完成"
+          echo "  Commit: \$COMMIT"
+          echo "  Actor:  \$ACTOR"
+          DEPLOY_SCRIPT
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "✓ Deployment succeeded"
+          echo "Commit: ${{ github.sha }}"
+          echo "Actor:  ${{ github.actor }}"
+
+      - name: Show recent logs on failure
+        if: failure()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          echo "✗ Deployment failed — recent logs:"
+          ssh "$DEPLOY_HOST" "sudo journalctl -u duoweilai -n 50 --no-pager" || true

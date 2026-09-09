@@ -9,13 +9,16 @@ Env vars (same names as v0.5):
   DUOWEILAI_DB             sqlite path (default <repo>/duoweilai.db)
   DUOWEILAI_SECURE_COOKIE  "1" to mark cookies Secure (behind HTTPS)
   DUOWEILAI_SMTP_*         password-reset mail (see services.log_password_reset)
+  DUOWEILAI_LOG_LEVEL      DEBUG/INFO/WARNING/ERROR (default INFO)
+  DUOWEILAI_LOG_FORMAT     human / json (default human; json 便于日志聚合)
 """
+
 import os
 from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from . import auth, db, security, services
+from . import auth, db, logging_setup, security, services
 from .api import api
 from .web import TYPE_SECTIONS, web
 
@@ -25,6 +28,9 @@ VERSION = "0.6"
 def create_app():
     root = Path(__file__).resolve().parent.parent
     app = Flask(__name__)
+
+    # 结构化日志（human 彩色 / json 行式），由环境变量控制
+    logging_setup.setup_logging()
 
     app.config.update(
         VERSION=VERSION,
@@ -40,6 +46,9 @@ def create_app():
 
     app.register_blueprint(api)
     app.register_blueprint(web)
+
+    # 请求生命周期日志中间件（g.request_id 可在代码中访问）
+    logging_setup.install_request_logging(app)
 
     # Template globals
     app.jinja_env.globals.update(
@@ -88,28 +97,28 @@ def create_app():
     def _404(_e):
         if _wants_json():
             return jsonify({"ok": False, "error": "Not found"}), 404
-        return render_template("error.html", title="404",
-                               message="This page doesn't exist."), 404
+        return render_template("error.html", title="404", message="This page doesn't exist."), 404
 
     @app.errorhandler(405)
     def _405(_e):
         if _wants_json():
             return jsonify({"ok": False, "error": "Method not allowed"}), 405
-        return render_template("error.html", title="405",
-                               message="Method not allowed."), 405
+        return render_template("error.html", title="405", message="Method not allowed."), 405
 
     @app.errorhandler(413)
     def _413(_e):
         if _wants_json():
             return jsonify({"ok": False, "error": "Payload too large."}), 413
-        return render_template("error.html", title="413",
-                               message="That submission is too large."), 413
+        return render_template(
+            "error.html", title="413", message="That submission is too large."
+        ), 413
 
     @app.errorhandler(500)
     def _500(_e):
         if _wants_json():
             return jsonify({"ok": False, "error": "Internal server error"}), 500
-        return render_template("error.html", title="500",
-                               message="Something broke on our side."), 500
+        return render_template(
+            "error.html", title="500", message="Something broke on our side."
+        ), 500
 
     return app

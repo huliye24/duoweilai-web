@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 项目文档
+    url: https://github.com/huliye24/duoweilai-web#readme
+    about: README、TEAM_GUIDE、Makefile (make help)
+  - name: 部署文档
+    url: https://github.com/huliye24/duoweilai-web/tree/main/deploy
+    about: setup.sh / deploy.sh / webhook_listener.py
+  - name: 安全问题（私密报告）
+    url: https://github.com/huliye24/duoweilai-web/security/advisories/new
+    about: 私密报告安全漏洞，请勿在 Issue 里发

@@ -1,0 +1,73 @@
+version: 2
+updates:
+  # ============================================================
+  # Python 依赖（requirements.txt + requirements-dev.txt）
+  # ============================================================
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Shanghai"
+    # 每周一上午 4 点检查更新（中国时区）
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    # 按类型分组 PR，避免一个 PR 改 10 个包
+    groups:
+      runtime:
+        patterns:
+          - "flask"
+          - "gunicorn"
+          - "waitress"
+          - "requests"
+          - "pyjwt"
+          - "bcrypt"
+      dev-tools:
+        dependency-type: "development"
+      # 其他包单独成 PR（让 reviewer 看清每一个）
+
+  # ============================================================
+  # GitHub Actions 自动保持最新
+  # ============================================================
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # ============================================================
+  # Docker（如启用）
+  # ============================================================
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+    ignore:
+      # 基础镜像故意钉死（追求可复现构建）
+      - dependency-name: "python"
+        versions:
+          - "<3.10"
+
+# 全局：忽略 major 版本自动升级（破坏性变更需人工处理）
+# 改成 [0] 表示只接收 patch
+# [1] 表示 patch + minor

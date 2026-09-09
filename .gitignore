@@ -23,3 +23,23 @@ Thumbs.db
 
 # Local-only files (working scripts, backups, AI memory)
 .gitignored/
+
+# === Dev tooling artifacts (added for Makefile + CI) ===
+# ruff / mypy / coverage
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# build / dist (sdist + wheel)
+build/
+dist/
+*.egg-info/
+
+# pip-audit
+.pip-audit/
+
+# 部署脚本在服务器上生成的备份快照（不进 git）
+.backups/
+

@@ -9,6 +9,7 @@ Production (see deploy/):
 Admin helper (靓号 delivery — create an account with a chosen ID):
     python server.py adduser 888888 buyer@example.com their-password
 """
+
 import os
 import sys
 
@@ -29,6 +30,7 @@ def _adduser(argv):
     sysid, email, password = argv[0].strip(), argv[1].strip(), argv[2]
     with app.app_context():
         from app import auth
+
         if not auth.valid_username(sysid):
             print("ID must be 3-20 letters, digits, or underscore.")
             return 1

@@ -162,6 +162,71 @@ Each suite spins up its own server on its own port with a scratch database — n
 
 ---
 
+## 🚀 Deploy to Cloud
+
+> Push to `main` → GitHub Actions 自动跑 CI → 通过后自动 SSH 到服务器部署。
+> 你只需要在 GitHub 上写代码 + 合并 PR，服务器同步搞定。
+
+### 一次性配置
+
+1. **在服务器上**（首次或新机器）执行 `setup.sh`：
+   ```bash
+   bash deploy/setup.sh    # 安装 nginx / python / 签证书 / systemd
+   ```
+
+2. **在 GitHub 仓库 Settings → Secrets and variables → Actions** 添加：
+   | 名称 | 必填 | 示例 |
+   |------|------|------|
+   | `SSH_PRIVATE_KEY` | ✅ | 服务器 `~/.ssh/authorized_keys` 里加一把专用公钥，把私钥贴进来 |
+   | `DEPLOY_HOST` | ✅ | `root@1.2.3.4` 或 `ubuntu@my.server.com` |
+   | `DEPLOY_PATH` | ⚠️ | `/opt/duoweilai`（默认就是这个） |
+
+3. **完成**。从现在起：
+   - PR → CI（lint + typecheck + test + security audit）
+   - merge 到 main → 通过 CI → 自动部署 → 健康检查
+   - 部署失败自动回滚到上一备份
+
+### 手动部署
+
+```bash
+# 本地：绕过 GitHub Actions（紧急情况）
+make deploy HOST=user@server
+
+# GitHub 网页：Actions → Deploy → Run workflow（可指定 ref + 原因）
+```
+
+### 部署架构
+
+```
+git push main ──► GitHub Actions
+                  ├─ ci.yml    → lint + typecheck + test 矩阵
+                  └─ deploy.yml → 等 CI 通过 → SSH 部署
+                                   ├─ git pull
+                                   ├─ 备份当前代码（5 快照轮转）
+                                   ├─ 同步到 /opt/duoweilai（保留 db / secret.env）
+                                   ├─ pip install（仅 requirements 变化时）
+                                   ├─ systemctl restart duoweilai
+                                   └─ /api/health 校验
+                                        ├─ 通过 ✓
+                                        └─ 失败 ✗ → 自动回滚
+
+git push tag v* ──► release.yml → 校验 VERSION + 构建 wheel + GitHub Release
+                                  + （可选）手动触发部署到生产
+```
+
+### 服务器端文件分工
+
+| 路径 | 作用 | 谁来改 |
+|------|------|--------|
+| `/opt/duoweilai/` | 运行目录（代码 + db + secret.env + venv） | GitHub Actions 同步 |
+| `/opt/duoweilai-repo/` | 裸仓库（`/opt/duoweilai` 的内容源） | GitHub Actions 维护 |
+| `/opt/duoweilai/.backups/` | 部署历史快照（自动保留 5 份） | 自动生成 |
+| `webhook_listener.py` | 备用 webhook 监听器（端口 9000） | 兼容模式，无需修改 |
+
+详见 [`.github/WORKFLOWS.md`](./.github/WORKFLOWS.md) 和 [`deploy/`](./deploy/)。
+
+---
+
 ## Related
 
 - [huliye24/duoweilai](https://github.com/huliye24/duoweilai) — Vision repository (imagination/world/story archives)

@@ -1,0 +1,25 @@
+# CODEOWNERS — 自动指派 Reviewer
+# 格式：pattern  @user-or-team
+# --------------------------------------------------
+# 当 PR 改动匹配下方的文件/路径时，GitHub 会自动指派对应 reviewer
+# --------------------------------------------------
+
+# 默认：所有改动需 owner 审核
+# /  @huliye24
+
+# 安全相关（CSRF、密码、速率限制）
+/app/security.py  @huliye24
+/app/auth.py      @huliye24
+
+# 数据库 schema 与迁移
+/app/db.py        @huliye24
+*.sql             @huliye24
+
+# 部署相关（生产环境改动需谨慎）
+/deploy/          @huliye24
+/.github/workflows/deploy.yml  @huliye24
+/.github/workflows/release.yml @huliye24
+
+# 文档（任何人都可以提 PR，owner 只做最终把关）
+/README.md        @huliye24
+/TEAM_GUIDE.md    @huliye24

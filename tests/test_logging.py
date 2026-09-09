@@ -121,26 +121,46 @@ def test_setup_is_idempotent():
 def test_setup_respects_env():
     import os
 
+    # 钉住全部相关环境变量：CI 的 step 可能预设 LOG_LEVEL=WARNING，
+    # 若不显式指定 level，INFO 级测试消息会被过滤，buf 为空导致断言失败
+    saved = {k: os.environ.get(k) for k in ("DUOWEILAI_LOG_FORMAT", "DUOWEILAI_LOG_LEVEL")}
     os.environ["DUOWEILAI_LOG_FORMAT"] = "json"
-    buf = io.StringIO()
-    setup_logging(stream=buf)
-    get_logger("test.idempotent").info("env-driven json")
-    output = buf.getvalue().strip().splitlines()
-    assert len(output) >= 1
-    obj = json.loads(output[-1])
-    assert obj["logger"] == "test.idempotent"
-    del os.environ["DUOWEILAI_LOG_FORMAT"]
+    os.environ["DUOWEILAI_LOG_LEVEL"] = "INFO"
+    try:
+        buf = io.StringIO()
+        setup_logging(stream=buf)
+        get_logger("test.idempotent").info("env-driven json")
+        output = buf.getvalue().strip().splitlines()
+        assert len(output) >= 1
+        obj = json.loads(output[-1])
+        assert obj["logger"] == "test.idempotent"
+    finally:
+        _restore_env(saved)
 
 
 def test_setup_respects_level_env():
     import os
 
+    saved = {k: os.environ.get(k) for k in ("DUOWEILAI_LOG_FORMAT", "DUOWEILAI_LOG_LEVEL")}
     os.environ["DUOWEILAI_LOG_LEVEL"] = "WARNING"
-    buf = io.StringIO()
-    setup_logging(stream=buf)
-    get_logger("test.level").info("should not appear")
-    assert "should not appear" not in buf.getvalue()
-    del os.environ["DUOWEILAI_LOG_LEVEL"]
+    try:
+        buf = io.StringIO()
+        setup_logging(stream=buf)
+        get_logger("test.level").info("should not appear")
+        assert "should not appear" not in buf.getvalue()
+    finally:
+        _restore_env(saved)
+
+
+def _restore_env(saved):
+    """恢复进入测试前的环境变量（预设值原样写回，未预设的移除）。"""
+    import os
+
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 # -------- runner --------

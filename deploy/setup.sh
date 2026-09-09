@@ -36,8 +36,9 @@ if [ ! -f $APP_DIR/secret.env ]; then
     echo "DUOWEILAI_SECRET_KEY=$SECRET" > $APP_DIR/secret.env
 fi
 chown -R duoweilai:duoweilai $APP_DIR
-chmod 750 $APP_DIR
+chmod 755 $APP_DIR                      # nginx(www-data) 需要进入目录读取 /static/
 chmod 600 $APP_DIR/secret.env
+chmod 640 $APP_DIR/duoweilai.db 2>/dev/null || true   # 数据库不开放其他用户读
 
 echo "==> 5/8 安装 systemd 服务"
 cp -f deploy/duoweilai.service /etc/systemd/system/duoweilai.service

@@ -122,11 +122,19 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Add host key (skip on first run)
+      - name: Add host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-          # 注：首次部署建议手动 ssh 一遍把 host key 加进 known_hosts
+          # DEPLOY_HOST 形如 root@1.2.3.4，ssh-keyscan 只认主机部分
+          HOST="${DEPLOY_HOST#*@}"
+          KEYS=$(ssh-keyscan "$HOST" 2>/dev/null)
+          if [ -z "$KEYS" ]; then
+            echo "::error::ssh-keyscan got no keys for $HOST — is port 22 reachable from GitHub runners?"
+            exit 1
+          fi
+          echo "$KEYS" >> ~/.ssh/known_hosts
 
       - name: Deploy via SSH
         env:

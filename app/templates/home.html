@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+  {% if user %}
+  <div class="hero fade-in">
+    <h1>What future do you imagine?</h1>
+    <p>Write down a future. It becomes a permanent seed.</p>
+  </div>
+  <form method="post" action="/api/future">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <div class="input-wrapper">
+      <textarea name="title" id="futureInput" placeholder="Describe a future..."
+                rows="4"></textarea>
+      <div class="form-footer">
+        <select name="category" style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--fg);padding:6px 10px;font-size:13px;font-family:inherit;cursor:pointer">
+          {% for c in CATEGORIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+        <span class="hint">⌘ Enter to publish</span>
+        <button type="submit" class="btn-primary" id="publishBtn" disabled>Publish a Future</button>
+      </div>
+    </div>
+  </form>
+  {% else %}
+  <div class="hero fade-in">
+    <h1>What future do you imagine?</h1>
+    <p>Pick an ID. Set a password. Plant seeds that outlive you.</p>
+  </div>
+  <div style="display:flex;gap:12px;justify-content:center;margin-bottom:32px">
+    <a href="/register" class="btn-primary" style="text-decoration:none">Plant your first seed</a>
+    <a href="/login" class="btn-secondary" style="text-decoration:none">Sign in</a>
+  </div>
+  <div style="text-align:center;color:var(--subtle);font-size:13.5px;max-width:480px;margin:0 auto">
+    No phone number needed. Just an email so we can help you recover your account.
+  </div>
+  {% endif %}
+
+  {% if futures %}
+  <div class="seeds-section">
+    <div class="section-label">Recently Published</div>
+    <div class="seeds-grid">
+      {% for f in futures %}
+      <a href="/f/{{ f.short_id }}" class="seed-card">
+        <div class="title">{{ f.title }}</div>
+        <div class="meta">{{ f.creator }} · {{ f.branches }} branches · {{ rel_time(f.created_at) }}{% if f.is_world %} <span class="world-indicator">World</span>{% endif %}</div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Welcome back</h1>
+    <p style="color:var(--muted);font-size:14px">Sign in to plant seeds and grow worlds.</p>
+  </div>
+  {% if err %}<div class="alert err" style="margin-bottom:16px">{{ err }}</div>{% endif %}
+  <form method="post" action="/api/login" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px">Your ID</label>
+    <input name="username" value="{{ form.username }}" required
+           placeholder="Your ID" class="text-input" style="font-size:15px" autofocus>
+
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Password</label>
+    <input name="password" type="password" required placeholder="Your password"
+           class="text-input" style="font-size:15px">
+
+    <div style="text-align:right;margin-top:8px">
+      <a href="/forgot" style="font-size:12.5px;color:var(--subtle);text-decoration:none">Forgot your password?</a>
+    </div>
+
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:20px;padding:13px;font-size:15px">Sign in</button>
+  </form>
+  <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--muted)">
+    No account yet? <a href="/register" style="color:var(--fg);text-decoration:none;border-bottom:1px solid #3f3f46">Create one</a>
+  </div>
+</div>
+{% endblock %}

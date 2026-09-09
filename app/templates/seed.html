@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+  <div class="seed-meta">
+    <span>Future Seed</span><span>·</span>
+    <span class="seed-id">#{{ f.short_id }}</span>
+    <span>·</span><span>{{ f.views }} views</span>
+    {% if f.parent_short_id %}
+    <span>·</span><span>Branched from {% if parent %}<a href="/f/{{ parent.short_id }}" style="color:var(--muted)">#{{ parent.short_id }}</a>{% else %}#{{ f.parent_short_id }}{% endif %}</span>
+    {% endif %}
+    {% if f.is_world %}<span>·</span><span style="color:var(--fg)">World</span>{% endif %}
+    {% if can_edit_seed %}
+    <a class="icon-btn" data-edit-toggle="seed" style="margin-left:8px;color:var(--muted);text-decoration:none">edit</a>
+    <a class="icon-btn danger" data-delete="/api/future/{{ f.short_id }}/delete" data-label="this seed" style="margin-left:8px;color:var(--muted);text-decoration:none">delete</a>
+    {% endif %}
+  </div>
+  <h1 class="seed-title">{{ f.title }}</h1>
+  {% if f.body %}<div class="seed-body">{{ f.body }}</div>{% endif %}
+
+  {% if can_edit_seed %}
+  <div class="edit-form" id="seedEditForm">
+    <input name="title" value="{{ f.title }}" maxlength="500" placeholder="Title">
+    <textarea name="body" rows="4" placeholder="Description (optional)">{{ f.body or '' }}</textarea>
+    <div class="edit-actions">
+      <select name="category" class="ghost-select">
+        {% for c in CATEGORIES %}<option value="{{ c }}"{% if c == (f.category or 'Unknown') %} selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select>
+      <button type="button" data-edit-cancel>Cancel</button>
+      <button type="button" data-edit-save="/api/future/{{ f.short_id }}/edit" class="primary">Save</button>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="seed-footer">
+    <a href="/person/{{ f.creator|urlencode }}" class="creator">
+      <div class="avatar">{{ avatar_initial(f.creator) }}</div>
+      <div>
+        <div class="creator-name">{{ f.creator }}</div>
+        <div class="creator-date">{{ rel_time(f.created_at) }}{% if f.edited_at %} · <span class="edited-mark">edited</span>{% endif %}</div>
+      </div>
+    </a>
+    <div>
+      <button class="btn-secondary" data-copy="/f/{{ f.short_id }}">Share</button>
+      {% if user %}<button class="btn-secondary" data-branch-toggle>Branch</button>{% endif %}
+      {% if f.is_world %}<a href="/world/{{ f.short_id }}" class="btn-secondary" style="display:inline-block;text-decoration:none;margin-top:8px">Enter World view →</a>{% endif %}
+    </div>
+  </div>
+
+  {% if user %}
+  <div class="edit-form" id="branchForm">
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Plant a new seed that grows out of this one.</p>
+    <textarea name="title" rows="3" placeholder="Describe the branched future..."></textarea>
+    <textarea name="body" rows="3" placeholder="Description (optional)"></textarea>
+    <div class="edit-actions">
+      <select name="category" class="ghost-select">
+        {% for c in CATEGORIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+      <button type="button" data-branch-cancel>Cancel</button>
+      <button type="button" data-branch-save data-parent="{{ f.short_id }}" class="primary">Plant branch</button>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="explore-label">Explore this Future</div>
+  <div class="explore-grid">
+    {% for t, info in TYPE_SECTIONS.items() %}
+    <a href="#{{ info[1] }}" class="explore-card">
+      <div class="icon">{{ info[2] }}</div>
+      <div class="name">{{ info[0] }}</div>
+      <div class="count">{{ groups.get(t, [])|length }} {{ info[0] }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="branches-section">
+    <div class="section-header">
+      <div class="section-title">Recent Branches</div>
+      <a href="/f/{{ f.short_id }}" class="section-link">View all →</a>
+    </div>
+    {% if child_branches %}
+    <div class="branch-list">
+      {% for b in child_branches %}
+      <a href="/f/{{ b.short_id }}" class="branch-item">
+        <span class="branch-title">{{ b.title }}</span>
+        <span class="branch-meta">{{ b.creator }} · {{ rel_time(b.created_at) }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty" style="margin-top:16px">No branches yet.</div>
+    {% endif %}
+  </div>
+
+  {% if user %}
+  <div class="cta-box" style="margin-top:32px">
+    <p>Help this future grow. Add something to it.</p>
+    <form method="post" action="/api/contribute">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="future_id" value="{{ f.short_id }}">
+      <select name="type" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:12px">
+        {% for k, v in TYPE_EN.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+      </select>
+      <input name="title" placeholder="Title" required style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px">
+      <textarea name="body" placeholder="Description (optional)" rows="3" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;color:var(--fg);padding:12px 14px;font-size:14px;font-family:inherit;margin-bottom:10px"></textarea>
+      <button type="submit" class="btn-primary">Contribute</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="cta-box" style="margin-top:32px">
+    <p>Sign in to add People, Places, Stories, Rules, Objects, or Branches to this future.</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <a href="/register" class="btn-primary" style="text-decoration:none">Create account</a>
+      <a href="/login" class="btn-secondary" style="text-decoration:none">Sign in</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div style="margin-top:40px">
+    <div class="section-label">Growing Content · {{ n_contribs }}</div>
+    {% if ordered_groups %}
+    {% for t, label, items in ordered_groups %}
+    <div style="margin-top:32px">
+      <div class="section-label">{{ label }}</div>
+      {% for c in items %}
+      <div class="contrib-item">
+        <div class="contrib-type">{{ label }}</div>
+        <div class="contrib-title">{{ c.title }}</div>
+        <div class="contrib-meta{% if user and user.id == c.author_id %} has-actions{% endif %}">by {{ c.creator }} · {{ rel_time(c.created_at) }}{% if c.edited_at %} <span class="edited-mark">(edited)</span>{% endif %}{% if user and user.id == c.author_id %}
+          <span class="row-actions" style="display:inline-flex;gap:4px;margin-left:8px">
+            <button class="icon-btn" data-edit-toggle>edit</button>
+            <button class="icon-btn danger" data-delete="/api/contribution/{{ c.id }}/delete" data-label="this contribution">✕</button>
+          </span>{% endif %}
+        </div>
+        {% if c.body %}<div class="contrib-body">{{ c.body }}</div>{% endif %}
+        {% if user and user.id == c.author_id %}
+        <div class="edit-form">
+          <input name="title" value="{{ c.title }}" maxlength="200" placeholder="Title">
+          <textarea name="body" rows="3" placeholder="Description (optional)">{{ c.body or '' }}</textarea>
+          <div class="edit-actions">
+            <button type="button" data-edit-cancel>Cancel</button>
+            <button type="button" data-edit-save="/api/contribution/{{ c.id }}/edit" class="primary">Save</button>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty" style="margin-top:16px">No contributions yet. Be the first.</div>
+    {% endif %}
+  </div>
+
+  <div style="margin-top:40px">
+    <div class="section-label">Discussion · {{ n_comments }}</div>
+    {% if user %}
+    <div class="comment-form">
+      <form method="post" action="/api/comment">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="future_id" value="{{ f.short_id }}">
+        <textarea name="body" placeholder="Share a thought on this future..." rows="3"></textarea>
+        <div style="margin-top:10px">
+          <button type="submit" class="btn-secondary">Post comment</button>
+        </div>
+      </form>
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:20px;border:1px dashed #3f3f46;border-radius:12px;margin-top:24px">
+      <p style="color:var(--muted);margin-bottom:12px;font-size:14px">Sign in to join the discussion.</p>
+      <a href="/login" class="btn-secondary" style="text-decoration:none;display:inline-block">Sign in</a>
+    </div>
+    {% endif %}
+    <div class="comment-list">
+      {% for cm in flat_comments %}
+      <div class="comment" data-row>
+        <div style="font-size:13px;font-weight:500">{{ cm.username }}{% if user and user.id == cm.author_id %}
+          <button class="icon-btn" data-edit-toggle style="margin-left:4px">edit</button>
+          <button class="icon-btn danger" data-delete="/api/comment/{{ cm.id }}/delete" data-label="this comment" style="margin-left:4px">✕</button>{% endif %}{% if cm.depth == 0 and user %}
+          <button class="icon-btn" data-reply-toggle style="margin-left:4px">↩ reply</button>{% endif %}</div>
+        <div style="font-size:12px;color:var(--subtle);margin-bottom:6px">{{ rel_time(cm.created_at) }}{% if cm.edited_at %} <span class="edited-mark">(edited)</span>{% endif %}</div>
+        <div style="font-size:14px;margin-top:4px">{{ cm.body }}</div>
+        <div class="reply-form" data-future-id="{{ f.short_id }}" data-parent-id="{{ cm.id }}">
+          <textarea placeholder="Write a reply..."></textarea>
+          <div class="reply-actions">
+            <button data-reply-cancel class="icon-btn">Cancel</button>
+            <button data-reply-post class="icon-btn primary" style="background:var(--fg);color:var(--bg);border-radius:8px;border:1px solid var(--fg)">Post</button>
+          </div>
+        </div>
+        {% if user and user.id == cm.author_id %}
+        <div class="edit-form">
+          <textarea name="body" rows="3">{{ cm.body }}</textarea>
+          <div class="edit-actions">
+            <button type="button" data-edit-cancel>Cancel</button>
+            <button type="button" data-edit-save="/api/comment/{{ cm.id }}/edit" class="primary">Save</button>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

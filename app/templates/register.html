@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Join Duoweilai</h1>
+    <p style="color:var(--muted);font-size:14px">Pick an ID, set a password. One email — that's all.</p>
+  </div>
+  {% if err %}<div class="alert err" style="margin-bottom:16px">{{ err }}</div>{% endif %}
+  <form method="post" action="/api/register" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:14px">Your ID</label>
+    <input name="username" value="{{ form.username }}" required minlength="3" maxlength="20"
+           pattern="[A-Za-z0-9_]+" title="3-20 letters, digits, underscore"
+           placeholder="e.g. alice, futuremaker"
+           class="text-input" style="font-size:15px">
+    <div style="font-size:12px;color:var(--subtle);margin-top:4px">3–20 letters / digits / underscore. This is how people find you.</div>
+
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Email <span style="color:#52525b">(for account recovery only)</span></label>
+    <input name="email" type="email" value="{{ form.email }}" required
+           placeholder="you@example.com" class="text-input" style="font-size:15px">
+
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;margin-top:18px">Password</label>
+    <input name="password" type="password" required minlength="6"
+           placeholder="At least 6 characters" class="text-input" style="font-size:15px">
+
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:24px;padding:13px;font-size:15px">Create my account</button>
+  </form>
+  <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--muted)">
+    Already have an account? <a href="/login" style="color:var(--fg);text-decoration:none;border-bottom:1px solid #3f3f46">Sign in</a>
+  </div>
+</div>
+{% endblock %}

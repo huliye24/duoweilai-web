@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-label">World</div>
+    <ul class="nav-list">
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#history">History</a></li>
+      {% for t, info in TYPE_SECTIONS.items() %}
+      <li><a href="#{{ info[1] }}">{{ info[0] }}</a></li>
+      {% endfor %}
+    </ul>
+  </aside>
+  <main class="main-content">
+    <div class="world-badge">World <span>Growing</span></div>
+    <h1 class="world-title">{{ f.title }}</h1>
+    <p class="world-tagline">A future taking shape</p>
+    <div class="world-meta">
+      <span>From <a href="/f/{{ f.short_id }}" style="color:inherit;text-decoration:underline"><strong>Seed {{ f.short_id }}</strong></a></span>
+      <span><strong>{{ f.views }}</strong> views</span>
+      <span><strong>{{ n_contribs }}</strong> contributions</span>
+      <span>Since {{ rel_time(f.created_at) }}</span>
+    </div>
+
+    <section class="section" id="overview">
+      <div class="section-title">Overview</div>
+      <div class="overview-text">{{ f.body if f.body else 'No overview yet.' }}</div>
+    </section>
+
+    {% for t, label, items in ordered_groups %}
+    <section class="section" id="{{ TYPE_SECTIONS[t][1] }}">
+      <div class="section-title">{{ label }}</div>
+      <div class="cards">
+        {% for c in items %}
+        <a href="#" class="card">
+          <div class="name">{{ c.title }}</div>
+          {% if c.body %}<div class="desc">{{ c.body }}</div>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+    <section class="section" id="history">
+      <div class="section-title">Timeline</div>
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="date">{{ rel_time(f.created_at) }}</div>
+          <div class="event">Seed created by {{ f.creator }}</div>
+        </div>
+        {% for c in timeline_contribs %}
+        <div class="timeline-item">
+          <div class="date">{{ rel_time(c.created_at) }}</div>
+          <div class="event">{{ c.creator }} added {{ TYPE_EN[c.type] }}: {{ c.title }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Contributors</div>
+      <div class="contributors">
+        {% for name in contributors %}
+        <a href="/person/{{ name|urlencode }}" class="contributor"><span class="av">{{ avatar_initial(name) }}</span> {{ name }}</a>
+        {% endfor %}
+      </div>
+    </section>
+
+    <div class="cta-box">
+      <p>Help build this world.</p>
+      <a href="/f/{{ f.short_id }}" class="btn-primary" style="display:inline-block;text-decoration:none">Contribute</a>
+    </div>
+  </main>
+</div>
+<footer>duoweilai.com/world/{{ f.short_id }}</footer>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-wide">
+  <h1 class="page-title">Explore Futures</h1>
+  <p class="page-desc">Browse the futures we're imagining — by the questions we care about, not by content type.</p>
+
+  <form method="get" action="/explore" class="explore-search">
+    {% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}
+    <input type="text" name="q" class="text-input" value="{{ q }}" placeholder="Search futures…" autocomplete="off">
+    <button type="submit" class="btn-secondary">Search</button>
+  </form>
+
+  <div class="categories">
+    {% for c in chips %}<a class="cat-btn{% if c.active %} active{% endif %}" href="{{ c.url }}">{{ c.label }}</a>{% endfor %}
+  </div>
+
+  <div class="section-label">{% if filtered %}Results · {{ total }}{% else %}Future Questions{% endif %}</div>
+  <div class="questions-grid">
+    {% for fu in futures %}
+    <a href="/f/{{ fu.short_id }}" class="question-card">
+      <div class="q">{{ fu.title }}</div>
+      <div class="meta"><span>{{ fu.category or 'Unknown' }}</span><span>{{ fu.branches }} seeds</span></div>
+    </a>
+    {% else %}
+    <div class="empty" id="explore-empty">{% if filtered %}No futures match your search.{% else %}No futures published yet.{% endif %}</div>
+    {% endfor %}
+  </div>
+
+  {% if not filtered and page == 1 %}
+  <div class="section-label">Recently Growing</div>
+  <div class="seed-list">
+    {% for fu in futures[:6] %}
+    <a href="/f/{{ fu.short_id }}" class="seed-row">
+      <span class="title">{{ fu.title }}</span>
+      <span class="info">{{ fu.branches }} branches · {{ rel_time(fu.created_at) }}{% if fu.is_world %} <span class="world-indicator">World</span>{% endif %}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if pages > 1 %}
+  <div class="pager">
+    {% if prev_url %}<a href="{{ prev_url }}">← Prev</a>{% endif %}
+    <span class="pg-cur">Page {{ page }} of {{ pages }}</span>
+    {% if next_url %}<a href="{{ next_url }}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

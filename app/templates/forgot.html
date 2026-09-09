@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+{% if sent_to %}
+<div class="container" style="max-width:420px;text-align:center">
+  <h1 style="font-size:22px;font-weight:500;margin-bottom:12px">Check your inbox</h1>
+  <p style="color:var(--muted);font-size:14.5px;line-height:1.7">If an account exists for <b>{{ sent_to }}</b>, a reset link has been sent.<br>The link expires in 2 hours.</p>
+  <div style="margin-top:24px"><a href="/login" class="btn-secondary" style="text-decoration:none;display:inline-block">Back to sign in</a></div>
+</div>
+{% else %}
+<div class="container" style="max-width:420px">
+  <div style="text-align:center;margin-bottom:32px">
+    <h1 style="font-size:24px;font-weight:500;margin-bottom:8px">Forgot your password?</h1>
+    <p style="color:var(--muted);font-size:14px">Enter the email you used when you signed up.</p>
+  </div>
+  {% if err %}<div class="alert err" style="margin-bottom:16px">{{ err }}</div>{% endif %}
+  <form method="post" action="/api/forgot" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label style="font-size:12px;color:var(--subtle);letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px">Email</label>
+    <input name="email" type="email" required placeholder="you@example.com"
+           class="text-input" style="font-size:15px" autofocus>
+    <button type="submit" class="btn-primary" style="width:100%;margin-top:20px;padding:13px;font-size:15px">Send reset link</button>
+  </form>
+  <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--muted)">
+    <a href="/login" style="color:var(--fg);text-decoration:none;border-bottom:1px solid #3f3f46">Back to sign in</a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

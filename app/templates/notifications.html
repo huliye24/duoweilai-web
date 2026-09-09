@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+  <h1 style="font-size:20px;font-weight:500;margin-bottom:24px">Notifications</h1>
+  <div>
+    {% for n in notifs %}
+    <a href="{% if n.future_short_id %}/f/{{ n.future_short_id }}{% else %}/{% endif %}" class="notif{% if not n.is_read %} unread{% endif %}">
+      <div class="dot{% if n.is_read %} read{% endif %}"></div>
+      <div style="flex:1"><b>{{ n.actor_name or 'someone' }}</b> {{ n.text }}
+        <div style="font-size:12px;color:var(--subtle);margin-top:2px">{{ rel_time(n.created_at) }}</div>
+      </div>
+      <div style="font-size:14px;color:var(--subtle)">→</div>
+    </a>
+    {% else %}<div class="empty">No notifications yet.</div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

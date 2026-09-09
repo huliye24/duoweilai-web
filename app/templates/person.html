@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+  <div class="profile">
+    <div class="avatar-lg">{{ avatar_initial(username) }}</div>
+    <div>
+      <h1 style="font-size:22px;font-weight:500;letter-spacing:-0.02em;margin-bottom:8px">{{ username }}</h1>
+      <p style="font-size:15px;color:var(--muted);margin-bottom:16px">A future explorer</p>
+      <div class="stats">
+        <div class="stat"><span class="stat-num">{{ started }}</span><span class="stat-label">Futures</span></div>
+        <div class="stat"><span class="stat-num">{{ worlds_count }}</span><span class="stat-label">Worlds</span></div>
+        <div class="stat"><span class="stat-num">{{ total_branches }}</span><span class="stat-label">Branches</span></div>
+        <div class="stat"><span class="stat-num">{{ contributions_count }}</span><span class="stat-label">Contributions</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="futures">Futures I Started</button>
+    <button class="tab" data-tab="worlds">Worlds I Helped Build</button>
+    <button class="tab" data-tab="contribs">Contributions</button>
+  </div>
+
+  <div id="futures" class="tab-content">
+    <div class="item-list">
+      {% for fu in futures %}
+      <a href="/f/{{ fu.short_id }}" class="item">
+        <span class="title">{{ fu.title }}</span>
+        <span class="meta">{{ fu.branches }} branches · {{ rel_time(fu.created_at) }}{% if fu.is_world %} <span class="world-indicator">World</span>{% endif %}</span>
+      </a>
+      {% else %}<div class="empty">No futures started yet.</div>{% endfor %}
+    </div>
+  </div>
+
+  <div id="worlds" class="tab-content" style="display:none">
+    <div class="item-list">
+      {% for w in worlds %}
+      <a href="/world/{{ w.short_id }}" class="item">
+        <span class="title">{{ w.title }}</span>
+        <span class="meta">{{ w.ccount }} contributions</span>
+      </a>
+      {% else %}<div class="empty">No worlds built yet.</div>{% endfor %}
+    </div>
+  </div>
+
+  <div id="contribs" class="tab-content" style="display:none">
+    <div class="item-list">
+      {% for c in recent_contribs %}
+      <a href="/f/{{ c.short_id }}" class="item">
+        <span class="title">Added <em>{{ TYPE_EN[c.type] }}</em>: {{ c.title }}</span>
+        <span class="meta">{{ rel_time(c.created_at) }}</span>
+      </a>
+      {% else %}<div class="empty">No contributions yet.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+<footer>duoweilai.com/person/{{ username|urlencode }}</footer>
+{% endblock %}

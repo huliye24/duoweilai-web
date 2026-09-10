@@ -27,8 +27,8 @@ ifeq ($(OS),Windows_NT)
 endif
 
 # 启用 bash 严格模式
-.SHELLFLAGS := -eu -o pipefail
-.SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+SHELL := /bin/bash
 
 .DEFAULT_GOAL := help
 
